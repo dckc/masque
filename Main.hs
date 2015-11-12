@@ -17,6 +17,7 @@ import Control.Monad.Trans.RWS
 import Data.Binary.Get
 import Data.Bits
 import qualified Data.ByteString.Lazy as BSL
+import Data.Data.Lens
 import Data.Foldable (toList)
 import Data.IORef
 import Data.List
@@ -34,6 +35,7 @@ import System.IO
 import Text.PrettyPrint.GenericPretty
 
 import Masque.AST
+import Masque.ASTIO
 import Masque.Objects
 
 instance Show Unique where
@@ -84,93 +86,33 @@ final = lens g s
 
 -- | Name analysis
 
-namesBound :: Pattern -> [String]
-namesBound (BindPattern n) = [n]
-namesBound (Final n _) = [n]
-namesBound (Ignore _) = []
-namesBound (ListPattern ps) = concatMap namesBound ps
-namesBound (Var n _) = [n]
-namesBound (Via _ p) = namesBound p
+namesBound :: Patt -> [String]
+namesBound (BindPatt n) = [n]
+namesBound (FinalPatt n _) = [n]
+namesBound (IgnorePatt _) = []
+namesBound (ListPatt ps) = concatMap namesBound ps
+namesBound (VarPatt n _) = [n]
+namesBound (ViaPatt _ p) = namesBound p
 
-namesUsed :: Node -> [String]
-namesUsed node = mapMaybe f $ universe node
-    where f (Noun n)     = Just n
-          f (Assign n _) = Just n
+namesUsed :: Expr -> [String]
+namesUsed expr = mapMaybe f $ universe expr
+    where f (NounExpr n)     = Just n
+          f (AssignExpr n _) = Just n
           f _            = Nothing
 
 -- XXX this is such a horrible hack
-nameUsed :: Node -> String -> Bool
+nameUsed :: Expr -> String -> Bool
 nameUsed _ "_flexList" = True
 nameUsed _ "_flexMap" = True
 nameUsed _ "_listIterator" = True
 nameUsed node name = name `elem` namesUsed node
 
-patternUnused :: Pattern -> Node -> Bool
-patternUnused pattern node =
-    all (not . nameUsed node) (namesBound pattern)
+patternUnused :: Patt -> Expr -> Bool
+patternUnused pattern expr =
+    all (not . nameUsed expr) (namesBound pattern)
 
--- | Optimization
-
-singleSequences :: Node -> Maybe Node
-singleSequences (Sequence []) = Just Null
-singleSequences (Sequence [n]) = Just n
-singleSequences _ = Nothing
-
-defIgnoreNull :: Node -> Maybe Node
-defIgnoreNull (Def (Ignore Null) _ rvalue) = Just rvalue
-defIgnoreNull _ = Nothing
-
-unusedEscape :: Node -> Maybe Node
-unusedEscape (Escape pattern node (Ignore Null) Null)
-    | patternUnused pattern node = Just node
-unusedEscape _ = Nothing
-
-narrowEscapeLeft :: Node -> Maybe Node
-narrowEscapeLeft (Escape pattern (Sequence (n:ns)) catchPattern catchNode)
-    | patternUnused pattern n =
-        Just $ Sequence [n, Escape pattern (Sequence ns) catchPattern catchNode]
-narrowEscapeLeft _ = Nothing
-
-narrowEscapeRight:: Node -> Maybe Node
-narrowEscapeRight
-    (Escape p@(Final name Null) (Sequence ns) catchPattern catchNode) =
-        case break f ns of
-            (_, []) -> Nothing
-            (before, callNode:_) -> Just $
-                Escape p (Sequence (before ++ [callNode])) catchPattern catchNode
-    where f (Call (Noun name') (StrNode "run") _) = name == name'
-          f _                                     = False
-narrowEscapeRight _ = Nothing
-
-singleEscape :: Node -> Maybe Node
-singleEscape (Escape (Final n Null) (Call (Noun n') (StrNode "run") (Tuple [v])) cp cn)
-    | n == n' && not (nameUsed v n) = Just $ case cn of
-        Null -> v
-        _    -> Sequence [Def cp Null v, cn]
-singleEscape _ = Nothing
-
-unusedFinally :: Node -> Maybe Node
-unusedFinally (Finally node Null) = Just node
-unusedFinally _ = Nothing
-
-makeList :: Node -> Maybe Node
-makeList (Call (Noun "__makeList") (StrNode "run") t@(Tuple _)) = Just t
-makeList _ = Nothing
-
-optimizations :: [Node -> Maybe Node]
-optimizations =
-    [ singleSequences
-    , defIgnoreNull
-    , unusedEscape
-    , narrowEscapeLeft
-    , narrowEscapeRight
-    , singleEscape
-    , unusedFinally
-    , makeList
-    ]
-
-optimize :: Node -> Node
-optimize = rewrite $ \node -> msum $ map ($ node) optimizations
+optimize :: Expr -> Expr
+optimize e = e
 
 -- | Debugging
 
@@ -357,13 +299,13 @@ call o@(UserObj _ _ env methodMap matchers) verb args =
     where
     methods = methodMap ^. ix verb
 
-    callMethod ((p, n):ms) = scoped $ do
-        success <- unify (ConstListObj $ Seq.fromList args) p
+    callMethod ((Method _ _ p todo1 n todo2):ms) = scoped $ do
+        success <- unify (ConstListObj $ Seq.fromList args) (ListPatt p)
         if success then eval n else callMethod ms
     callMethod [] = callMatcher matchers
 
     -- XXX This function is kind of a mess; bracket?
-    callMatcher ((p, n):ms) = flip catchError (\_ -> callMatcher ms) $ scoped $ do
+    callMatcher ((Matcher p n):ms) = flip catchError (\_ -> callMatcher ms) $ scoped $ do
         void $ withEjector $ \ej -> do
             unifyEject (ConstListObj $ Seq.fromList [StrObj verb, ConstListObj $ Seq.fromList args]) ej p
             return NullObj
@@ -455,63 +397,59 @@ resolve obj = return obj
 
 -- | Unification and evaluation
 
-unifyEject :: Obj -> Obj -> Pattern -> Monte ()
-unifyEject _  _ (BindPattern _) = undefined
-unifyEject obj _ (Final n Null) = defBinding n obj
-unifyEject obj ej (Final n g) = do
+unifyEject :: Obj -> Obj -> Patt -> Monte ()
+unifyEject _  _ (BindPatt _) = undefined
+unifyEject obj _ (FinalPatt n Nothing) = defBinding n obj
+unifyEject obj ej (FinalPatt n (Just g)) = do
     g' <- eval g
     obj' <- call g' "coerce" [obj, ej]
     defBinding n obj'
-unifyEject _ _ (Ignore Null) = return ()
-unifyEject obj ej (Ignore g) = do
+unifyEject _ _ (IgnorePatt Nothing) = return ()
+unifyEject obj ej (IgnorePatt (Just g)) = do
     g' <- eval g
     void $ call g' "coerce" [obj, ej]
-unifyEject (ConstListObj os) ej (ListPattern ps)
+unifyEject (ConstListObj os) ej (ListPatt ps)
     | Seq.length os == length ps = forM_ (zip os' ps) $ \(o, p) -> unifyEject o ej p
     where os' = toList os
-unifyEject _ ej (ListPattern _) = fire ej NullObj
+unifyEject _ ej (ListPatt _) = fire ej NullObj
 -- XXX need to generate slots here
-unifyEject obj _ (Var n _) = varBinding n obj
-unifyEject obj ej (Via expr p) = do
+unifyEject obj _ (VarPatt n _) = varBinding n obj
+unifyEject obj ej (ViaPatt expr p) = do
     examiner <- eval expr
     examined <- call examiner "run" [obj, ej]
     unifyEject examined ej p
 
-unify :: Obj -> Pattern -> Monte Bool
-unify _  (BindPattern _) = undefined
-unify obj (Final n Null) = defBinding n obj >> return True
-unify obj (Final n g) = do
+unify :: Obj -> Patt -> Monte Bool
+unify _  (BindPatt _) = undefined
+unify obj (FinalPatt n Nothing) = defBinding n obj >> return True
+unify obj (FinalPatt n (Just g)) = do
     g' <- eval g
     obj' <- call g' "coerce" [obj, NullObj]
     defBinding n obj'
     return True
-unify _ (Ignore Null) = return True
-unify obj (Ignore g) = do
+unify _ (IgnorePatt Nothing) = return True
+unify obj (IgnorePatt (Just g)) = do
     g' <- eval g
     void $ call g' "coerce" [obj, NullObj]
     return True
-unify (ConstListObj os) (ListPattern ps)
+unify (ConstListObj os) (ListPatt ps)
     | Seq.length os == length ps = do
         unified <- forM (zip os' ps) $ uncurry unify
         return $ and unified
     where os' = toList os
-unify _ (ListPattern _) = return False
-unify obj (Var n _) = varBinding n obj >> return True
-unify obj (Via expr p) = do
+unify _ (ListPatt _) = return False
+unify obj (VarPatt n _) = varBinding n obj >> return True
+unify obj (ViaPatt expr p) = do
     examiner <- eval expr
     examined <- call examiner "run" [obj, NullObj]
     unify examined p
 
-eval :: Node -> Monte Obj
-eval Null = return NullObj
-eval (CharNode c) = return $ CharObj c
-eval (DoubleNode d) = return $ DoubleObj d
-eval (IntNode i) = return $ IntObj i
-eval (StrNode s) = return $ StrObj s
-eval (Tuple t) = do
-    objs <- mapM eval t
-    return . ConstListObj $ Seq.fromList objs
-eval (Assign name node) = do
+eval :: Expr -> Monte Obj
+eval (CharExpr c) = return $ CharObj c
+eval (DoubleExpr d) = return $ DoubleObj d
+eval (IntExpr i) = return $ IntObj i
+eval (StrExpr s) = return $ StrObj s
+eval (AssignExpr name node) = do
     obj <- eval node
     binding <- getBinding name
     case binding of
@@ -520,48 +458,46 @@ eval (Assign name node) = do
         VarBind slotRef _ -> do
             liftIO $ writeIORef slotRef obj
             return obj
-eval (BindingNode _) = return BindingObj
-eval (Call o v as) = do
+eval (BindingExpr _) = return BindingObj
+eval (CallExpr o v as nas) = do
     o' <- eval o
-    StrObj v' <- eval v
-    ConstListObj as' <- eval as
-    call o' v' $ toList as'
-eval (Def p ej expr) = do
+    as' <- mapM eval as
+    call o' v $ toList as'
+eval (DefExpr p ej expr) = do
     rvalue <- eval expr
     ej' <- eval ej
     unifyEject rvalue ej' p
     return rvalue
-eval (Escape p n _ _) = scoped $ do
+eval (EscapeExpr p n _ _) = scoped $ do
     ej@(EjectorObj u) <- newEjector
     success <- unify ej p
     if success then catchEjector u $ eval n else left Unknown
-eval (Finally node atLast) = bracketEitherT before after return
+eval (FinallyExpr node atLast) = bracketEitherT before after return
     where
     before = scoped $ eval node
     after obj = scoped $ eval atLast >> return obj
-eval (If i t f) = do
+eval (IfExpr i t f) = do
     test <- eval i
     BoolObj b <- resolve test
     scoped $ eval $ if b then t else f
-eval (Hide n) = scoped $ eval n
-eval (Noun name) = getName name
-eval (Object _ p _ (Script _ methods matchers)) = mdo
+eval (HideExpr n) = scoped $ eval n
+eval (NounExpr name) = getName name
+eval (ObjectExpr _ p _ _ methods matchers) = mdo
     u <- liftIO newUnique
-    let rv = UserObj u objName env methodMap matcherList
+    let rv = UserObj u objName env methodMap matchers
     success <- unify rv p
     env <- uses envStack $ \es -> Env (M.unions (map _unEnv (NE.toList es)))
     if success then return rv else left Unknown
     where
     methodMap = M.fromListWith (++) methodList
-    methodList = [(verb, [(ListPattern p', n)]) | Method _ (StrNode verb) p' _ n <- methods ]
-    matcherList = [(p', n) | Matcher p' n <- matchers ]
+    methodList = [(verb, [m]) | m@(Method _ verb _ _ _ _) <- methods ]
     objName = case p of
-        Final name _ -> name
-        _            -> "_"
-eval (Sequence ns) = do
+        FinalPatt name _ -> name
+        _                -> "_"
+eval (SequenceExpr ns) = do
     os <- mapM eval ns
     return $ if null os then NullObj else last os
-eval (Try n p h) = scoped $ catchError (eval n) $ \_ -> do
+eval (TryExpr n p h) = scoped $ catchError (eval n) $ \_ -> do
     success <- unify NullObj p
     if success then eval h else left Unknown
 eval n = error $ "Couldn't evaluate node: " ++ show n
@@ -585,7 +521,7 @@ mapToScope _ = error "mapToScope was misused"
 
 -- | Script evaluation
 
-loadNode :: BSL.ByteString -> IO Node
+loadNode :: BSL.ByteString -> IO Expr
 loadNode bs = let node = optimize $ runGet getNode bs in do
     putStrLn "Loaded and optimized AST:"
     pp node
