@@ -11,7 +11,7 @@ import qualified Data.ByteString.Char8 as BSC
 import Data.Foldable
 import Data.List (genericIndex)
 
-import AST
+import Masque.AST
 
 data MASTContext = MASTContext {
   ctxExprs :: [Expr],
@@ -53,6 +53,13 @@ getNode field = do
 
 getExpr :: StateT MASTContext Get Expr
 getExpr = getNode ctxExprs
+
+getMaybeExpr :: StateT MASTContext Get (Maybe Expr)
+getMaybeExpr = do
+  e <- getExpr
+  return $ case e of
+    SequenceExpr [] -> Nothing -- see tag 'N' below
+    _ -> Just e
 
 getPatt :: StateT MASTContext Get Patt
 getPatt = getNode ctxPatts
@@ -98,7 +105,7 @@ nextTag = do
                 'I' -> do
                     i <- getVarInt
                     return $ IntExpr $ zzd i
-                'N' -> return $ NounExpr "null"
+                'N' -> return $ SequenceExpr [] -- "NullExpr" @@
                 'S' -> StrExpr <$> getStr
             modify (\ctx -> ctx { ctxExprs = (ctxExprs ctx) ++ [expr] })
         -- Patts
@@ -107,10 +114,10 @@ nextTag = do
             patt <- case (toEnum . fromEnum) pattTag of
                 'A' -> ViaPatt <$> getExpr <*> getPatt
                 'B' -> BindPatt <$> getStr
-                'F' -> FinalPatt <$> getStr <*> getExpr
-                'I' -> IgnorePatt <$> getExpr
+                'F' -> FinalPatt <$> getStr <*> getMaybeExpr
+                'I' -> IgnorePatt <$> getMaybeExpr
                 'L' -> ListPatt <$> getPatts
-                'V' -> VarPatt <$> getStr <*> getExpr
+                'V' -> VarPatt <$> getStr <*> getMaybeExpr
             modify (\ctx -> ctx { ctxPatts = (ctxPatts ctx) ++ [patt]})
         'M' -> do
             method <- Method <$> getStr <*> getStr <*> getPatts <*> getNamedPatts <*> getExpr <*> getExpr
