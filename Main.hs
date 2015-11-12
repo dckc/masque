@@ -1,15 +1,15 @@
 module Main where
 
 import Control.Lens
-import Control.Monad.IO.Class
-import Data.Binary.Get
+import Control.Monad.IO.Class (liftIO)
+import Data.Binary.Get (runGet)
 import qualified Data.ByteString.Lazy as BSL
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.Map as M
-import Network.Socket
-import System.Environment
-import System.Exit
-import Text.PrettyPrint.GenericPretty
+import Network.Socket (withSocketsDo)
+import System.Environment (getArgs)
+import System.Exit (ExitCode(ExitFailure), exitWith)
+import Text.PrettyPrint.GenericPretty (Out, pp)
 
 import Masque.Monte
 import Masque.AST
