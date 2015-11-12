@@ -31,7 +31,7 @@ data Obj = NullObj
          | ConstListObj (Seq.Seq Obj)
          | ConstMapObj [(Obj, Obj)]
          | BuiltinObj String
-         | UserObj Unique String Env (M.Map String [(Pattern, Node)]) [(Pattern, Node)]
+         | UserObj Unique String Env (M.Map String [Method]) [Matcher]
 
 instance Show Obj where
     show NullObj = "null"
