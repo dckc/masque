@@ -60,3 +60,31 @@ optimizations =
 
 optimize :: Node -> Node
 optimize = rewrite $ \node -> msum $ map ($ node) optimizations
+
+-- | Name analysis
+
+namesBound :: Patt -> [String]
+namesBound (BindPatt n) = [n]
+namesBound (FinalPatt n _) = [n]
+namesBound (IgnorePatt _) = []
+namesBound (ListPatt ps) = concatMap namesBound ps
+namesBound (VarPatt n _) = [n]
+namesBound (ViaPatt _ p) = namesBound p
+
+namesUsed :: Expr -> [String]
+namesUsed expr = mapMaybe f $ universe expr
+    where f (NounExpr n)     = Just n
+          f (AssignExpr n _) = Just n
+          f _            = Nothing
+
+-- XXX this is such a horrible hack
+nameUsed :: Expr -> String -> Bool
+nameUsed _ "_flexList" = True
+nameUsed _ "_flexMap" = True
+nameUsed _ "_listIterator" = True
+nameUsed node name = name `elem` namesUsed node
+
+patternUnused :: Patt -> Expr -> Bool
+patternUnused pattern expr =
+    all (not . nameUsed expr) (namesBound pattern)
+
