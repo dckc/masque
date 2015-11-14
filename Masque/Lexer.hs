@@ -5,7 +5,7 @@ module Masque.Lexer where
 import Data.Char
 import Data.List as L
 import Data.Map as M
-import Data.Maybe (fromMaybe, isJust, fromJust)
+import Data.Maybe (fromMaybe, isJust, fromJust, maybeToList)
 import Numeric (readHex)
 
 data Token
@@ -27,11 +27,15 @@ data Token
      | KW_when | KW_while
 
      | TokIDENTIFIER String
+     | TokDOLLAR_IDENT String
+     | TokAT_IDENT String
 
      | TokChar Char
      | TokInt Integer
      | TokDouble Double
      | TokString String
+
+     | TokQUASI Direction String
 
      | TokBracket Shape Direction
 
@@ -65,6 +69,8 @@ data Token
 
 data Shape
      = Round | Square | Curly
+     | Dollar  -- ${ }
+     | At      -- @{ }
      deriving (Show, Eq, Ord)
 
 data Direction
@@ -146,35 +152,39 @@ lexer ('"':cs) = (TokString chars) : lexer rest
 
 lexer ('\'':cs) = charLiteral cs
   where
-    charLiteral ('\\':cs') = charEscape cs'
+    charLiteral ('\\':cs') = loop $ charConstant cs'
       where
-        charEscape :: String -> [Token]
-        charEscape ('\n':cs'') = charEscape cs''
-        charEscape ('U':h1:h2:h3:h4:h5:h6:h7:h8:'\'':cs'')
-          | (all isHexDigit $ h1:h2:h3:h4:h5:h6:h7:h8:[]) =
-              (TokChar $ decodeHex $ h1:h2:h3:h4:h5:h6:h7:h8:[]) : lexer cs''
-        charEscape ('u':h1:h2:h3:h4:'\'':cs'')
-          | (all isHexDigit $ h1:h2:h3:h4:[]) =
-              (TokChar $ decodeHex $ h1:h2:h3:h4:[]) : lexer cs''
-        charEscape ('x':h1:h2:'\'':cs'')
-          | (all isHexDigit $ h1:h2:[]) =
-              (TokChar $ decodeHex $ h1:h2:[]) : lexer cs''
-        charEscape (esc:'\'':cs'') = case M.lookup esc esc_decode of
-          (Just ch) -> (TokChar ch) : lexer cs''
-          Nothing -> error "bad escape in character literal"
-        charEscape _ = error "bad escape in character literal"
-        esc_decode = M.fromList [
-          ('b', '\b'),
-          ('t', '\t'),
-          ('n', '\n'),
-          ('f', '\f'),
-          ('r', '\r'),
-          ('"', '"'),
-          ('\'', '\''),
-          ('\\', '\\')]
-        decodeHex s = toEnum $ fst $ head (readHex s)
+        loop :: (Maybe Char, String) -> [Token]
+        loop (Nothing, more) = loop $ charConstant more
+        loop (Just ch, more) = (TokChar ch) : lexer more
     charLiteral (ch:'\'':cs') = (TokChar ch) : lexer cs'
     charLiteral _ = error "bad character literal"
+
+lexer ('`':cs) = quasiPart cs
+  where
+    quasiPart cs' = loop [] cs' []
+    loop :: String -> String -> [Token] -> [Token]
+    loop _ [] _ = error "File ends inside quasiliteral"
+    loop buf ('`':rest) parts = parts ++ [(TokQUASI Close buf)] ++ lexer rest
+    loop buf ('@':'@':more) parts = loop (buf ++ ['@']) more parts
+    loop buf ('$':'$':more) parts = loop (buf ++ ['$']) more parts
+    loop buf ('$':'\\':more) parts = loop (buf ++ chars) after parts
+      where
+        (char01, after) = charConstant more
+        chars = maybeToList char01
+
+    loop buf (sigil:p:cs') parts
+      | elem sigil ['$', '@'] && idPart p = lexId (p:cs')
+      where
+        lexId :: String -> [Token]
+        lexId cs'' = loop [] rest ((TokQUASI Open buf):tok:parts)
+          where
+            (word, rest) = span idPart cs''
+            tok = case M.lookup (L.map toLower word) $ decode keywords of
+              Just _ -> error $ word ++ "is a keyword"
+              Nothing -> if sigil == '@' then TokAT_IDENT word
+                         else TokDOLLAR_IDENT word
+    loop buf (ch:more) parts = loop (buf ++ [ch]) more parts
 
 -- @@isJust/fromJust is a kludge. how to do this right?
 lexer (s1:s2:s3:cs)
@@ -195,15 +205,47 @@ idStart '_' = True
 idStart c | isAsciiUpper c = True
 idStart c | isAsciiLower c = True
 idStart _ = False
--- TODO: $blee DOLLAR_IDENT
 
 idPart :: Char -> Bool
 idPart c | idStart c = True
 idPart c | isDigit c = True
 idPart _ = False
 
+charConstant :: String -> (Maybe Char, String)
+charConstant more = charEscape more
+  where
+    charEscape [] = error "End of input in middle of literal"
+    charEscape ('\n':cs) = (Nothing, cs)
+    charEscape ('U':h1:h2:h3:h4:h5:h6:h7:h8:cs)
+      | (all isHexDigit $ h1:h2:h3:h4:h5:h6:h7:h8:[]) =
+        (Just $ decodeHex $ h1:h2:h3:h4:h5:h6:h7:h8:[], cs)
+    charEscape ('u':h1:h2:h3:h4:cs)
+      | (all isHexDigit $ h1:h2:h3:h4:[]) =
+          (Just $ decodeHex $ h1:h2:h3:h4:[], cs)
+    charEscape ('x':h1:h2:cs)
+      | (all isHexDigit $ h1:h2:[]) =
+          (Just $ decodeHex $ h1:h2:[], cs)
+    charEscape (esc:cs) = case M.lookup esc esc_decode of
+      (Just ch) -> (Just ch, cs)
+      Nothing -> error "bad escape in character literal"
+    esc_decode = M.fromList [
+      ('b', '\b'),
+      ('t', '\t'),
+      ('n', '\n'),
+      ('f', '\f'),
+      ('r', '\r'),
+      ('"', '"'),
+      ('\'', '\''),
+      ('\\', '\\')]
+    decodeHex s = toEnum $ fst $ head (readHex s)
+
+
 tag :: Token -> String
 tag (TokIDENTIFIER _) = "IDENTIFIER"
+tag (TokAT_IDENT _) = "AT_IDENT"
+tag (TokDOLLAR_IDENT _) = "DOLLAR_IDENT"
+tag (TokQUASI Open _) = "QUASI_OPEN"
+tag (TokQUASI Close _) = "QUASI_CLOSE"
 tag (TokChar _) = ".char."
 tag (TokString _) = ".String."
 tag (TokInt _) = ".int."
@@ -242,9 +284,10 @@ brackets = [
   (")", TokBracket Round Close),
   ("[", TokBracket Square Open),
   ("]", TokBracket Square Close),
+  ("${", TokBracket Dollar Open),
+  ("@{", TokBracket At Open),
   ("{", TokBracket Curly Open),
   ("}", TokBracket Curly Close)]
--- TODO: ${}, @{}, $$, @@
 
 assign_ops :: [((String, Token), (String, Token))]
 assign_ops = [
