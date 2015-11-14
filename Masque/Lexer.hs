@@ -4,7 +4,7 @@ module Masque.Lexer where
 
 import Data.Char
 import Data.Map as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust, fromJust)
 import Numeric (readHex)
 
 data Token
@@ -24,34 +24,76 @@ data Token
      | KW_to | KW_try
      | KW_var | KW_via
      | KW_when | KW_while
-     | TokenIDENTIFIER String
-     | TokenChar Char
-        deriving (Show, Eq, Ord)
 
-tag :: Token -> String
-tag (TokenIDENTIFIER _) = "IDENTIFIER"
-tag (TokenChar _) = ".char."
-tag tok = case (M.lookup tok kw_encode) of
-  (Just s) -> s
-  Nothing -> error "???"
+     | TokIDENTIFIER String
+
+     | TokChar Char
+
+     | TokBracket Shape Direction
+
+     | TokXorAssign | TokXor
+     | TokAddAssign | TokAdd
+     | TokSubtractAssign | TokSubtract
+     | TokShiftLeftAssign | TokShiftLeft
+     | TokShiftRightAssign | TokShiftRight
+     | TokPowAssign | TokPow
+     | TokMultiplyAssign | TokMultiply
+     | TokFloorDivideAssign | TokFloorDivide
+     | TokApproxDivideAssign | TokApproxDivide
+     | TokModAssign | TokMod
+     | TokAndAssign | TokAnd
+     | TokOrAssign | TokOr
+
+     | TokComplement
+     | TokRangeIncl | TokRangeExcl
+     | TokAssign
+     | TokAsBigAs | TokLEq | TokGEq | TokEq | TokNotEq
+     | TokMatchBind | TokNotMatchBind
+     | TokLogicalAnd | TokLogicalOr | TokButNot
+                                       
+     | TokSemi | TokComma | TokColon
+     | TokStringNoun
+     | TokSuchThat | TokIgnore
+     | TokCall | TokSend
+     | TokArrow | TokFatArrow
+
+     deriving (Show, Eq, Ord)
+
+data Shape
+     = Round | Square | Curly
+     deriving (Show, Eq, Ord)
+
+data Direction
+     = Open | Close
+     deriving (Show, Eq, Ord)
 
 
 -- TODO: monadic lexer for error handling?
+-- TODO: line, column number tracking
 -- TODO: better error reporting, a la monte_lexer.mt?
 -- TODO: tests for '\<newline>x'
 -- TODO: optimize String to Data.ByteString.Lazy.UTF8?
 lexer :: String -> [Token]
 lexer [] = []
-lexer (c:cs)
-  | idStart c = lexId (c:cs)
+
+lexer ('#':cs) = lexer $ rest -- Comments
+  where
+    (_comment, nl_rest) = span (not . (==) '\n') cs
+    rest = drop 1 nl_rest  -- drop newline
+
+lexer (sp:cs) | isSpace sp = lexer cs  -- TODO: INDENT / DEDENT
+
+lexer (c:cs) | idStart c = lexId (c:cs)
   where
     lexId :: String -> [Token]
     lexId cs' =
-      fromMaybe (TokenIDENTIFIER word) (M.lookup word kw_decode) : lexer rest
+      fromMaybe tok_else try_kw : lexer rest
       where
         (word, rest) = span idPart cs'
-lexer ('\'':cs) =
-  charLiteral cs
+        try_kw = M.lookup word $ decode keywords
+        tok_else = if word == "_" then (TokIgnore) else (TokIDENTIFIER word)
+
+lexer ('\'':cs) = charLiteral cs
   where
     charLiteral ('\\':cs') = charEscape cs'
       where
@@ -59,15 +101,15 @@ lexer ('\'':cs) =
         charEscape ('\n':cs'') = charEscape cs''
         charEscape ('U':h1:h2:h3:h4:h5:h6:h7:h8:'\'':cs'')
           | (all isHexDigit $ h1:h2:h3:h4:h5:h6:h7:h8:[]) =
-              (TokenChar $ decodeHex $ h1:h2:h3:h4:h5:h6:h7:h8:[]) : lexer cs''
+              (TokChar $ decodeHex $ h1:h2:h3:h4:h5:h6:h7:h8:[]) : lexer cs''
         charEscape ('u':h1:h2:h3:h4:'\'':cs'')
           | (all isHexDigit $ h1:h2:h3:h4:[]) =
-              (TokenChar $ decodeHex $ h1:h2:h3:h4:[]) : lexer cs''
+              (TokChar $ decodeHex $ h1:h2:h3:h4:[]) : lexer cs''
         charEscape ('x':h1:h2:'\'':cs'')
           | (all isHexDigit $ h1:h2:[]) =
-              (TokenChar $ decodeHex $ h1:h2:[]) : lexer cs''
+              (TokChar $ decodeHex $ h1:h2:[]) : lexer cs''
         charEscape (esc:'\'':cs'') = case M.lookup esc esc_decode of
-          (Just ch) -> (TokenChar ch) : lexer cs''
+          (Just ch) -> (TokChar ch) : lexer cs''
           Nothing -> error "bad escape in character literal"
         charEscape _ = error "bad escape in character literal"
         esc_decode = M.fromList [
@@ -80,22 +122,47 @@ lexer ('\'':cs) =
           ('\'', '\''),
           ('\\', '\\')]
         decodeHex s = toEnum $ fst $ head (readHex s)
-    charLiteral (ch:'\'':cs') = (TokenChar ch) : lexer cs'
+    charLiteral (ch:'\'':cs') = (TokChar ch) : lexer cs'
     charLiteral _ = error "bad character literal"
+
+lexer (s1:s2:s3:cs)
+  -- @@isJust/fromJust is a kludge. how to do this right?
+  | isJust $ try_sym =
+      fromJust try_sym : lexer cs
+      where try_sym = symbol_decode (s1:s2:s3:[])
+lexer (s1:s2:cs)
+  | isJust $ try_sym =
+      fromJust try_sym : lexer cs
+      where try_sym = symbol_decode (s1:s2:[])
+lexer (s1:cs)
+  | isJust $ try_sym =
+      fromJust try_sym : lexer cs
+      where try_sym = symbol_decode (s1:[])
+
 lexer _ = undefined -- TODO
+
 
 idStart :: Char -> Bool
 idStart '_' = True
 idStart c | isAsciiUpper c = True
 idStart c | isAsciiLower c = True
 idStart _ = False
+-- TODO: $blee DOLLAR_IDENT
 
 idPart :: Char -> Bool
 idPart c | idStart c = True
 idPart c | isDigit c = True
 idPart _ = False
 
-data Keyword
+tag :: Token -> String
+tag (TokIDENTIFIER _) = "IDENTIFIER"
+tag (TokChar _) = ".char."
+tag tok = case (M.lookup tok $ encode vocabulary) of
+  (Just s) -> s
+  Nothing -> error "missing tag for" ++ (show tok)
+  where
+    vocabulary = keywords ++ punctuation ++ operators ++ brackets
+
 
 keywords :: [(String, Token)]
 keywords =
@@ -118,8 +185,66 @@ keywords =
    ("var", KW_var), ("via", KW_via),
    ("when", KW_when), ("while", KW_while)]
 
-kw_decode :: M.Map String Token
-kw_decode = fromList keywords
+brackets :: [(String, Token)]
+brackets = [
+  ("(", TokBracket Round Open),
+  (")", TokBracket Round Close),
+  ("[", TokBracket Square Open),
+  ("]", TokBracket Square Close),
+  ("{", TokBracket Curly Open),
+  ("}", TokBracket Curly Close)]
+-- TODO: ${}, @{}, $$, @@
 
-kw_encode :: M.Map Token String
-kw_encode = fromList [(tok, s) | (s, tok) <- keywords]
+assign_ops :: [((String, Token), (String, Token))]
+assign_ops = [
+  (("^=", TokXorAssign), ("^", TokXor)),
+  (("+=", TokAddAssign), ("+", TokAdd)),
+  (("-=", TokSubtractAssign), ("-", TokSubtract)),
+  (("<<=", TokShiftLeftAssign), ("<<", TokShiftLeft)),
+  ((">>=", TokShiftRightAssign), ("<<", TokShiftRight)),
+  (("**=", TokPowAssign), ("**", TokPow)),
+  (("*=", TokMultiplyAssign), ("*", TokMultiply)),
+  (("//=", TokFloorDivideAssign), ("//", TokFloorDivide)),
+  (("/=", TokApproxDivideAssign), ("/", TokApproxDivide)),
+  (("%=", TokModAssign), ("%", TokMod)),
+  (("&=", TokAndAssign), ("&", TokAnd)),
+  (("|=", TokOrAssign), ("|", TokOr))
+  ]
+
+operators :: [(String, Token)]
+operators = [
+  ("~", TokComplement),
+  ("..", TokRangeIncl),
+  ("..!", TokRangeExcl),
+  (":=", TokAssign),
+  ("<=>", TokAsBigAs),
+  ("<=", TokLEq),
+  (">=", TokGEq),
+  ("==", TokEq),
+  ("!=", TokNotEq),
+  ("=~", TokMatchBind),
+  ("!~", TokNotMatchBind),
+  ("&&", TokLogicalAnd),
+  ("||", TokLogicalOr),
+  ("&!", TokButNot)
+  ] ++ concat [[assign, op] | (assign, op) <- assign_ops]
+
+punctuation :: [(String, Token)]
+punctuation = [
+  (";", TokSemi), (",", TokComma), (":", TokColon),
+  ("::", TokStringNoun),
+  ("?", TokSuchThat), (")", TokIgnore),
+  (".", TokCall),
+  ("<-", TokSend),
+  ("->", TokArrow), ("=>", TokFatArrow)]
+
+decode :: [(String, Token)] -> M.Map String Token
+decode vocab = fromList vocab
+
+encode :: [(String, Token)] -> M.Map Token String
+encode vocab = fromList [(tok, s) | (s, tok) <- vocab]
+
+symbol_decode :: String -> Maybe Token
+symbol_decode chars =
+  M.lookup chars $ decode symbols
+  where symbols = punctuation ++ operators ++ brackets
