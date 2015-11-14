@@ -28,6 +28,7 @@ data Token
      | TokIDENTIFIER String
 
      | TokChar Char
+     | TokString String
 
      | TokBracket Shape Direction
 
@@ -76,7 +77,7 @@ data Direction
 lexer :: String -> [Token]
 lexer [] = []
 
-lexer ('#':cs) = lexer $ rest -- Comments
+lexer ('#':cs) = lexer rest -- Comments
   where
     (_comment, nl_rest) = span (not . (==) '\n') cs
     rest = drop 1 nl_rest  -- drop newline
@@ -92,6 +93,11 @@ lexer (c:cs) | idStart c = lexId (c:cs)
         (word, rest) = span idPart cs'
         try_kw = M.lookup word $ decode keywords
         tok_else = if word == "_" then (TokIgnore) else (TokIDENTIFIER word)
+
+lexer ('"':cs) = (TokString chars) : lexer rest -- Comments
+  where
+    (chars, quot_rest) = span (not . (==) '"') cs
+    rest = drop 1 quot_rest  -- drop closing "
 
 lexer ('\'':cs) = charLiteral cs
   where
