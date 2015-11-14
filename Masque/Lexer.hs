@@ -208,6 +208,9 @@ idPart _ = False
 tag :: Token -> String
 tag (TokIDENTIFIER _) = "IDENTIFIER"
 tag (TokChar _) = ".char."
+tag (TokString _) = ".String."
+tag (TokInt _) = ".int."
+tag (TokDouble _) = ".float64."
 tag tok = case (M.lookup tok $ encode vocabulary) of
   (Just s) -> s
   Nothing -> error "missing tag for" ++ (show tok)
