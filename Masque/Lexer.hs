@@ -3,6 +3,7 @@
 module Masque.Lexer where
 
 import Data.Char
+import Data.List as L
 import Data.Map as M
 import Data.Maybe (fromMaybe, isJust, fromJust)
 import Numeric (readHex)
@@ -28,6 +29,8 @@ data Token
      | TokIDENTIFIER String
 
      | TokChar Char
+     | TokInt Integer
+     | TokDouble Double
      | TokString String
 
      | TokBracket Shape Direction
@@ -88,13 +91,55 @@ lexer (c:cs) | idStart c = lexId (c:cs)
   where
     lexId :: String -> [Token]
     lexId cs' =
-      fromMaybe tok_else try_kw : lexer rest
+      fromMaybe tok_default try_kw : lexer rest
       where
         (word, rest) = span idPart cs'
-        try_kw = M.lookup word $ decode keywords
-        tok_else = if word == "_" then (TokIgnore) else (TokIDENTIFIER word)
+        try_kw = M.lookup (L.map toLower word) $ decode keywords
+        tok_default = if word == "_" then TokIgnore
+                      else (TokIDENTIFIER word)
 
-lexer ('"':cs) = (TokString chars) : lexer rest -- Comments
+lexer (d:cs) | isDigit d = lexNum (d:cs)
+  where
+    lexNum ('0':x:h:cs')
+      | elem x ['X', 'x'] && isHexDigit h =
+          (TokInt $ decodeHex digits) : lexer rest
+          where
+            (digits, rest) = span isHexDigit (h:cs')
+            decodeHex s = toEnum $ fst $ head (readHex s)
+    lexNum cs' =
+      let
+        (whole, more) = span isDigit cs'
+        try_frac :: Maybe (String, String)
+        try_frac = case more of
+          ('.':d':cs'')
+            | isDigit d' -> Just $ ('.':frac, rest)
+            where
+              (frac, rest) = span isDigit (d':cs'')
+          _ -> Nothing
+        try_expn = case try_frac of
+          (Just (_dot:_digit:_, (e:s:cs'')))
+            | elem e ['E', 'e'] -> Just $ (sign ++ expn, rest)
+            where
+              (sign, expn_rest) = if elem s ['+', '-']
+                                  then ([s], cs'') else ([], s:cs'')
+              (expn, rest) = span isDigit expn_rest
+          _ -> Nothing
+        try_double :: Maybe [Token]
+        try_double = case (try_frac, try_expn) of
+          ((Just (dot_frac, _)), (Just (sign_expn, rest))) ->
+            Just $ (TokDouble $ read numeral) : lexer rest
+            where
+              numeral = whole ++ dot_frac ++ sign_expn
+          ((Just (dot_frac, rest)), Nothing) ->
+            Just $ (TokDouble $ read numeral) : lexer rest
+            where
+              numeral = whole ++ dot_frac
+          _ -> Nothing
+        else_tok_int = TokInt $ read whole
+      in
+        fromMaybe (else_tok_int : lexer more) try_double
+
+lexer ('"':cs) = (TokString chars) : lexer rest
   where
     (chars, quot_rest) = span (not . (==) '"') cs
     rest = drop 1 quot_rest  -- drop closing "
