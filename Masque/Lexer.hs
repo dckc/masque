@@ -4,7 +4,8 @@ module Masque.Lexer where
 
 import Data.Char
 import Data.Map as M
-import Data.Maybe(fromMaybe)
+import Data.Maybe (fromMaybe)
+import Numeric (readHex)
 
 data Token
      = KW_as
@@ -35,6 +36,10 @@ tag tok = case (M.lookup tok kw_encode) of
   Nothing -> error "???"
 
 
+-- TODO: monadic lexer for error handling?
+-- TODO: better error reporting, a la monte_lexer.mt?
+-- TODO: tests for '\<newline>x'
+-- TODO: optimize String to Data.ByteString.Lazy.UTF8?
 lexer :: String -> [Token]
 lexer [] = []
 lexer (c:cs)
@@ -45,8 +50,39 @@ lexer (c:cs)
       fromMaybe (TokenIDENTIFIER word) (M.lookup word kw_decode) : lexer rest
       where
         (word, rest) = span idPart cs'
-
--- lexer ('\'':cs) = charLiteral cs
+lexer ('\'':cs) =
+  charLiteral cs
+  where
+    charLiteral ('\\':cs') = charEscape cs'
+      where
+        charEscape :: String -> [Token]
+        charEscape ('\n':cs'') = charEscape cs''
+        charEscape ('U':h1:h2:h3:h4:h5:h6:h7:h8:'\'':cs'')
+          | (all isHexDigit $ h1:h2:h3:h4:h5:h6:h7:h8:[]) =
+              (TokenChar $ decodeHex $ h1:h2:h3:h4:h5:h6:h7:h8:[]) : lexer cs''
+        charEscape ('u':h1:h2:h3:h4:'\'':cs'')
+          | (all isHexDigit $ h1:h2:h3:h4:[]) =
+              (TokenChar $ decodeHex $ h1:h2:h3:h4:[]) : lexer cs''
+        charEscape ('x':h1:h2:'\'':cs'')
+          | (all isHexDigit $ h1:h2:[]) =
+              (TokenChar $ decodeHex $ h1:h2:[]) : lexer cs''
+        charEscape (esc:'\'':cs'') = case M.lookup esc esc_decode of
+          (Just ch) -> (TokenChar ch) : lexer cs''
+          Nothing -> error "bad escape in character literal"
+        charEscape _ = error "bad escape in character literal"
+        esc_decode = M.fromList [
+          ('b', '\b'),
+          ('t', '\t'),
+          ('n', '\n'),
+          ('f', '\f'),
+          ('r', '\r'),
+          ('"', '"'),
+          ('\'', '\''),
+          ('\\', '\\')]
+        decodeHex s = toEnum $ fst $ head (readHex s)
+    charLiteral (ch:'\'':cs') = (TokenChar ch) : lexer cs'
+    charLiteral _ = error "bad character literal"
+lexer _ = undefined -- TODO
 
 idStart :: Char -> Bool
 idStart '_' = True
