@@ -5,7 +5,7 @@ module Masque.Lexer where
 import Data.Char
 import Data.List as L
 import Data.Map as M
-import Data.Maybe (fromMaybe, isJust, fromJust, maybeToList)
+import Data.Maybe (fromMaybe, isJust, isNothing, fromJust, maybeToList)
 import Numeric (readHex)
 
 data Token
@@ -39,22 +39,19 @@ data Token
 
      | TokBracket Shape Direction
 
-     | TokXorAssign | TokXor
-     | TokAddAssign | TokAdd
-     | TokSubtractAssign | TokSubtract
-     | TokShiftLeftAssign | TokShiftLeft
-     | TokShiftRightAssign | TokShiftRight
-     | TokPowAssign | TokPow
-     | TokMultiplyAssign | TokMultiply
-     | TokFloorDivideAssign | TokFloorDivide
-     | TokApproxDivideAssign | TokApproxDivide
-     | TokModAssign | TokMod
-     | TokAndAssign | TokAnd
-     | TokOrAssign | TokOr
+     | TokAssign
+     | TokVERB_ASSIGN String
+
+     | TokAdd | TokSubtract
+     | TokShiftLeft | TokShiftRight
+     | TokXor
+     | TokMod
+     | TokMultiply | TokFloorDivide | TokApproxDivide
+     | TokPow
+     | TokAnd | TokOr
 
      | TokComplement
      | TokRangeIncl | TokRangeExcl
-     | TokAssign
      | TokAsBigAs | TokLEq | TokGEq | TokEq | TokNotEq
      | TokMatchBind | TokNotMatchBind
      | TokLogicalAnd | TokLogicalOr | TokButNot
@@ -96,13 +93,27 @@ lexer (sp:cs) | isSpace sp = lexer cs  -- TODO: INDENT / DEDENT
 lexer (c:cs) | idStart c = lexId (c:cs)
   where
     lexId :: String -> [Token]
-    lexId cs' =
-      fromMaybe tok_default try_kw : lexer rest
+    lexId cs' = tok : lexer rest''
       where
         (word, rest) = span idPart cs'
         try_kw = M.lookup (L.map toLower word) $ decode keywords
-        tok_default = if word == "_" then TokIgnore
+        -- e.g. with=
+        try_verb_assign = case (word, rest) of
+          ("_", _) -> Nothing
+          (_, '=':bad:_)
+            | elem bad ['=', '>', '~'] -> Nothing
+          (_, '=':rest')
+            | isNothing try_kw -> Just (TokVERB_ASSIGN $ word ++ ['='], rest')
+          _ -> Nothing
+
+               -- ugh... clean up isJust / fromJust
+        (tok, rest'') =
+          if isJust try_verb_assign then fromJust try_verb_assign
+          else (let tok_default =
+                      if word == "_" then TokIgnore
                       else (TokIDENTIFIER word)
+                in fromMaybe tok_default try_kw,
+                rest)
 
 lexer (d:cs) | isDigit d = lexNum (d:cs)
   where
@@ -250,6 +261,12 @@ tag (TokChar _) = ".char."
 tag (TokString _) = ".String."
 tag (TokInt _) = ".int."
 tag (TokDouble _) = ".float64."
+tag (TokVERB_ASSIGN op) =
+  case M.lookup op opmap of
+  (Just sym) -> sym
+  Nothing -> "VERB_ASSIGN"
+  where
+    opmap = fromList $ [(verb, sym) | ((sym, verb), _) <- assign_ops]
 tag tok = case (M.lookup tok $ encode vocabulary) of
   (Just s) -> s
   Nothing -> error "missing tag for" ++ (show tok)
@@ -289,20 +306,20 @@ brackets = [
   ("{", TokBracket Curly Open),
   ("}", TokBracket Curly Close)]
 
-assign_ops :: [((String, Token), (String, Token))]
+assign_ops :: [((String, String), (String, Token))]
 assign_ops = [
-  (("^=", TokXorAssign), ("^", TokXor)),
-  (("+=", TokAddAssign), ("+", TokAdd)),
-  (("-=", TokSubtractAssign), ("-", TokSubtract)),
-  (("<<=", TokShiftLeftAssign), ("<<", TokShiftLeft)),
-  ((">>=", TokShiftRightAssign), ("<<", TokShiftRight)),
-  (("**=", TokPowAssign), ("**", TokPow)),
-  (("*=", TokMultiplyAssign), ("*", TokMultiply)),
-  (("//=", TokFloorDivideAssign), ("//", TokFloorDivide)),
-  (("/=", TokApproxDivideAssign), ("/", TokApproxDivide)),
-  (("%=", TokModAssign), ("%", TokMod)),
-  (("&=", TokAndAssign), ("&", TokAnd)),
-  (("|=", TokOrAssign), ("|", TokOr))
+  (("^=", "xor"), ("^", TokXor)),
+  (("+=", "add"), ("+", TokAdd)),
+  (("-=", "subtract"), ("-", TokSubtract)),
+  (("<<=", "shiftLeft"), ("<<", TokShiftLeft)),
+  ((">>=", "shiftRight"), ("<<", TokShiftRight)),
+  (("**=", "pow"), ("**", TokPow)),
+  (("*=", "multiply"), ("*", TokMultiply)),
+  (("//=", "floorDivide"), ("//", TokFloorDivide)),
+  (("/=", "approxDivide"), ("/", TokApproxDivide)),
+  (("%=", "mod"), ("%", TokMod)),
+  (("&=", "and"), ("&", TokAnd)),
+  (("|=", "or"), ("|", TokOr))
   ]
 
 operators :: [(String, Token)]
@@ -321,7 +338,9 @@ operators = [
   ("&&", TokLogicalAnd),
   ("||", TokLogicalOr),
   ("&!", TokButNot)
-  ] ++ concat [[assign, op] | (assign, op) <- assign_ops]
+  ] ++ concat aops
+  where
+    aops = [[(sym, TokVERB_ASSIGN verb), op] | ((sym, verb), op) <- assign_ops]
 
 punctuation :: [(String, Token)]
 punctuation = [
