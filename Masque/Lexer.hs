@@ -176,19 +176,16 @@ lexer ('\'':cs) = charLiteral cs
     charLiteral (ch:'\'':cs') = (TokChar ch) : lexer cs'
     charLiteral _ = error "bad character literal"
 
+-- @@isJust/fromJust is a kludge. how to do this right?
 lexer (s1:s2:s3:cs)
-  -- @@isJust/fromJust is a kludge. how to do this right?
-  | isJust $ try_sym =
-      fromJust try_sym : lexer cs
-      where try_sym = symbol_decode (s1:s2:s3:[])
+  | isJust $ try_sym = fromJust try_sym : lexer cs
+  where try_sym = symbol_decode (s1:s2:s3:[])
 lexer (s1:s2:cs)
-  | isJust $ try_sym =
-      fromJust try_sym : lexer cs
-      where try_sym = symbol_decode (s1:s2:[])
+  | isJust $ try_sym = fromJust try_sym : lexer cs
+  where try_sym = symbol_decode (s1:s2:[])
 lexer (s1:cs)
-  | isJust $ try_sym =
-      fromJust try_sym : lexer cs
-      where try_sym = symbol_decode (s1:[])
+  | isJust $ try_sym = fromJust try_sym : lexer cs
+  where try_sym = symbol_decode (s1:[])
 
 lexer _ = undefined -- TODO
 
