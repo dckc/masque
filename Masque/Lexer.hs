@@ -5,7 +5,7 @@ module Masque.Lexer where
 import Data.Char
 import Data.List as L
 import Data.Map as M
-import Data.Maybe (fromMaybe, isJust, maybeToList)
+import Data.Maybe (fromMaybe, maybeToList)
 import Numeric (readHex)
 
 data Token
@@ -64,6 +64,8 @@ data Token
      | TokCall | TokSend
      | TokArrow | TokFatArrow
 
+     | TokComment String
+     | TokNewLine Int
      deriving (Show, Eq, Ord)
 
 data Shape
@@ -88,33 +90,7 @@ lexer :: [Shape] -> String -> [Token]
 lexer [] [] = []
 lexer kets [] = error $ "EOF with brackets pending: " ++ (show kets)
 
-lexer (Quasi:kets) cs = quasiPart cs
-  where
-    quasiPart cs' = loop [] cs'
-    loop :: String -> String -> [Token]
-    loop _ [] = error "File ends inside quasiliteral"
-
-    -- stuff that doesn't start with @ or $ passes through
-    loop buf (ch:more)
-      | not $ elem ch ['@', '$', '`']
-      = loop (buf ++ [ch]) more
-
-    -- $$ @@ `` are escapes for @, $, 1
-    loop buf (sig1:sig2:more)
-      | elem sig1 ['@', '$', '`'] && sig2 == sig1
-        = loop (buf ++ [sig1]) more
-
-    -- $\x01 and such
-    loop buf ('$':'\\':more) = loop (buf ++ chars) after
-      where
-        (char01, after) = charConstant more
-        chars = maybeToList char01
-
-    loop buf ('`':rest)
-      = (TokQUASI Close buf) : lexer kets rest
-
-    loop buf rest -- $ or @
-      = (TokQUASI Open buf) : lexer (Hole:Quasi:kets) rest
+lexer (Quasi:kets) cs = quasiPart kets cs
 
 lexer kets (sigil:p:cs)
   | elem sigil ['$', '@'] && idPart p = lexId (p:cs)
@@ -146,14 +122,137 @@ lexer kets (c:cs) | idStart c = lexId (c:cs)
       (Right word, rest)
         -> (TokIDENTIFIER word) : lexer kets rest
 
-lexer kets ('#':cs) = lexer kets rest -- Comments
+lexer kets ('#':cs) = (TokComment comment) : lexer kets rest
   where
-    (_comment, nl_rest) = span (not . (==) '\n') cs
-    rest = drop 1 nl_rest  -- drop newline
+    (comment, rest) = span (not . (==) '\n') cs
 
-lexer kets (sp:cs) | isSpace sp = lexer kets cs  -- TODO: INDENT / DEDENT
+lexer kets ('\n':cs) = (TokNewLine $ length s) : lexer kets rest
+  where 
+    (s, rest) = span ((==) ' ') cs
 
-lexer kets (d:cs) | isDigit d = lexNum (d:cs)
+lexer kets (' ':cs) = lexer kets cs -- space between tokens on a line (TODO)
+
+lexer kets (d:cs) | isDigit d = numLit kets (d:cs)
+
+lexer kets ('"':cs) = (TokString chars) : lexer kets rest
+  where
+    (chars, quot_rest) = span (not . (==) '"') cs
+    rest = drop 1 quot_rest  -- drop closing "
+
+lexer kets ('\'':cs) = charLiteral cs
+  where
+    charLiteral ('\\':cs') = loop $ charConstant cs'
+      where
+        loop :: (Maybe Char, String) -> [Token]
+        loop (Nothing, more) = loop $ charConstant more
+        loop (Just ch, more) = (TokChar ch) : lexer kets more
+    charLiteral (ch:'\'':cs') = (TokChar ch) : lexer kets cs'
+    charLiteral _ = error "bad character literal"
+
+lexer kets (s1:chars) = lexSym s1 chars
+  where
+    symbolTokens = punctuation ++ operators ++ brackets
+    symbols = L.map fst symbolTokens
+
+    lexSym :: Char -> String -> [Token]
+    lexSym '`' _ = lexer (Quasi:kets) chars
+    lexSym _ (s2:s3:cs)
+      | elem (s1:s2:s3:[]) symbols = go kets (s1:s2:s3:[]) cs
+    lexSym _ (s2:cs)
+      | elem (s1:s2:[]) symbols = go kets (s1:s2:[]) cs
+    lexSym _ cs
+      | elem (s1:[]) symbols = go kets (s1:[]) cs
+
+    lexSym _ cs = error $ "syntax error? " ++ show (kets, s1:cs)
+
+    go :: [Shape] -> String -> String -> [Token]
+    go (shape:kets') [close] cs
+      | close == closeBracket shape
+        = (TokBracket shape Close) : lexer (drop hole kets') cs
+      where hole = case (close, kets') of
+              ('}', Hole:_) -> 1
+              _ -> 0
+    go _ [close] _cs
+      | elem close ['}', ']', ')']
+        = error $ "unexpected close bracket: " ++ show (close, kets)
+    go _ sym rest = tok : lexer (shapes ++ kets) rest
+      where
+        (tok, shapes) = openBrackets $ M.lookup sym $ decode symbolTokens
+
+
+idStart :: Char -> Bool
+idStart c = isAsciiUpper c || isAsciiLower c || c == '_'
+
+idPart :: Char -> Bool
+idPart c = idStart c || isDigit c || c == '_'
+
+idOrKeyword :: String -> (Either (String, Token) String, String)
+idOrKeyword cs =
+  let (word, rest) = span idPart cs in
+  case M.lookup (L.map toLower word) $ decode keywords of
+  (Just tok) -> (Left (word, tok), rest)
+  Nothing -> (Right word, rest)
+
+
+quasiPart :: [Shape] -> String -> [Token]
+quasiPart kets cs = loop [] cs
+  where
+    loop :: String -> String -> [Token]
+    loop _ [] = error "File ends inside quasiliteral"
+
+    -- stuff that doesn't start with @ or $ passes through
+    loop buf (ch:more)
+      | not $ elem ch ['@', '$', '`']
+      = loop (buf ++ [ch]) more
+
+    -- $$ @@ `` are escapes for @, $, 1
+    loop buf (sig1:sig2:more)
+      | elem sig1 ['@', '$', '`'] && sig2 == sig1
+        = loop (buf ++ [sig1]) more
+
+    -- $\x01 and such
+    loop buf ('$':'\\':more) = loop (buf ++ chars) after
+      where
+        (char01, after) = charConstant more
+        chars = maybeToList char01
+
+    loop buf ('`':rest)
+      = (TokQUASI Close buf) : lexer kets rest
+
+    loop buf rest -- $ or @
+      = (TokQUASI Open buf) : lexer (Hole:Quasi:kets) rest
+
+
+charConstant :: String -> (Maybe Char, String)
+charConstant more = charEscape more
+  where
+    charEscape [] = error "End of input in middle of literal"
+    charEscape ('\n':cs) = (Nothing, cs)
+    charEscape ('U':h1:h2:h3:h4:h5:h6:h7:h8:cs)
+      | (all isHexDigit $ h1:h2:h3:h4:h5:h6:h7:h8:[]) =
+        (Just $ decodeHex $ h1:h2:h3:h4:h5:h6:h7:h8:[], cs)
+    charEscape ('u':h1:h2:h3:h4:cs)
+      | (all isHexDigit $ h1:h2:h3:h4:[]) =
+          (Just $ decodeHex $ h1:h2:h3:h4:[], cs)
+    charEscape ('x':h1:h2:cs)
+      | (all isHexDigit $ h1:h2:[]) =
+          (Just $ decodeHex $ h1:h2:[], cs)
+    charEscape (esc:cs) = case M.lookup esc esc_decode of
+      (Just ch) -> (Just ch, cs)
+      Nothing -> error "bad escape in character literal"
+    esc_decode = M.fromList [
+      ('b', '\b'),
+      ('t', '\t'),
+      ('n', '\n'),
+      ('f', '\f'),
+      ('r', '\r'),
+      ('"', '"'),
+      ('\'', '\''),
+      ('\\', '\\')]
+    decodeHex s = toEnum $ fst $ head (readHex s)
+
+numLit :: [Shape] -> String -> [Token]
+numLit kets cs = lexNum cs
   where
     lexNum ('0':x:h:cs')
       | elem x ['X', 'x'] && isHexDigit h =
@@ -195,97 +294,6 @@ lexer kets (d:cs) | isDigit d = lexNum (d:cs)
       in
         fromMaybe (else_tok_int : lexer kets more) try_double
 
-lexer kets ('"':cs) = (TokString chars) : lexer kets rest
-  where
-    (chars, quot_rest) = span (not . (==) '"') cs
-    rest = drop 1 quot_rest  -- drop closing "
-
-lexer kets ('\'':cs) = charLiteral cs
-  where
-    charLiteral ('\\':cs') = loop $ charConstant cs'
-      where
-        loop :: (Maybe Char, String) -> [Token]
-        loop (Nothing, more) = loop $ charConstant more
-        loop (Just ch, more) = (TokChar ch) : lexer kets more
-    charLiteral (ch:'\'':cs') = (TokChar ch) : lexer kets cs'
-    charLiteral _ = error "bad character literal"
-
-lexer kets ('`':cs) = lexer (Quasi:kets) cs
-
--- @@isJust/fromJust is a kludge. how to do this right?
-lexer kets (s1:s2:s3:cs)
-  | isJust $ try_sym = tok : lexer (shapes ++ kets) cs
-  where try_sym = symbol_decode (s1:s2:s3:[])
-        (tok, shapes) = openBrackets try_sym
-lexer kets (s1:s2:cs)
-  | isJust $ try_sym = tok : lexer (shapes ++ kets) cs
-  where try_sym = symbol_decode (s1:s2:[])
-        (tok, shapes) = openBrackets try_sym
-
-lexer (shape:kets) (close:cs)
-  | close == closeBracket shape
-    = lexer kets' cs
-      where kets' = case (close, kets) of
-              ('}', Hole:kets'') -> kets''
-              _ -> kets
-lexer kets (close:_cs)
-  | elem close ['}', ']', ')']
-    = error $ "mismatched close bracket: " ++ show (close, kets)
-
-lexer kets (s1:cs)
-  | isJust $ try_sym = tok : lexer (shapes ++ kets) cs
-  where try_sym = symbol_decode (s1:[])
-        (tok, shapes) = openBrackets try_sym
-
-lexer kets cs = error $ "syntax error? " ++ show (kets, cs)
-
-
-idStart :: Char -> Bool
-idStart '_' = True
-idStart c | isAsciiUpper c = True
-idStart c | isAsciiLower c = True
-idStart _ = False
-
-idPart :: Char -> Bool
-idPart c | idStart c = True
-idPart c | isDigit c = True
-idPart _ = False
-
-idOrKeyword :: String -> (Either (String, Token) String, String)
-idOrKeyword cs =
-  let (word, rest) = span idPart cs in
-  case M.lookup (L.map toLower word) $ decode keywords of
-  (Just tok) -> (Left (word, tok), rest)
-  Nothing -> (Right word, rest)
-
-charConstant :: String -> (Maybe Char, String)
-charConstant more = charEscape more
-  where
-    charEscape [] = error "End of input in middle of literal"
-    charEscape ('\n':cs) = (Nothing, cs)
-    charEscape ('U':h1:h2:h3:h4:h5:h6:h7:h8:cs)
-      | (all isHexDigit $ h1:h2:h3:h4:h5:h6:h7:h8:[]) =
-        (Just $ decodeHex $ h1:h2:h3:h4:h5:h6:h7:h8:[], cs)
-    charEscape ('u':h1:h2:h3:h4:cs)
-      | (all isHexDigit $ h1:h2:h3:h4:[]) =
-          (Just $ decodeHex $ h1:h2:h3:h4:[], cs)
-    charEscape ('x':h1:h2:cs)
-      | (all isHexDigit $ h1:h2:[]) =
-          (Just $ decodeHex $ h1:h2:[], cs)
-    charEscape (esc:cs) = case M.lookup esc esc_decode of
-      (Just ch) -> (Just ch, cs)
-      Nothing -> error "bad escape in character literal"
-    esc_decode = M.fromList [
-      ('b', '\b'),
-      ('t', '\t'),
-      ('n', '\n'),
-      ('f', '\f'),
-      ('r', '\r'),
-      ('"', '"'),
-      ('\'', '\''),
-      ('\\', '\\')]
-    decodeHex s = toEnum $ fst $ head (readHex s)
-
 
 tag :: Token -> String
 tag (TokIDENTIFIER _) = "IDENTIFIER"
@@ -308,6 +316,7 @@ tag tok = case (M.lookup tok $ encode vocabulary) of
   Nothing -> error "missing tag for" ++ (show tok)
   where
     vocabulary = keywords ++ punctuation ++ operators ++ brackets
+-- TODO: test/finish tag?
 
 
 keywords :: [(String, Token)]
@@ -408,8 +417,3 @@ decode vocab = fromList vocab
 
 encode :: [(String, Token)] -> M.Map Token String
 encode vocab = fromList [(tok, s) | (s, tok) <- vocab]
-
-symbol_decode :: String -> Maybe Token
-symbol_decode chars =
-  M.lookup chars $ decode symbols
-  where symbols = punctuation ++ operators ++ brackets
