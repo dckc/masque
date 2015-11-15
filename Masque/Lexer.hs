@@ -2,6 +2,7 @@
 
 module Masque.Lexer where
 
+import Control.Applicative ((<|>))
 import Data.Char
 import Data.List as L
 import Data.Map as M
@@ -80,6 +81,41 @@ data Direction
      = Open | Close
      deriving (Show, Eq, Ord)
 
+
+offside :: [Token] -> [Token]
+offside toks = track [] $ L.filter notComment toks
+  where
+    notComment tok = case tok of
+      (TokComment _) -> False
+      _ -> True
+      
+    track [] [] = []
+    track pending [] = loop pending
+      where
+        loop [] = []
+        loop (_:stack') = (TokBracket Curly Close):loop stack'
+    
+    track stack ((TokNewLine 0):toks') = (TokSemi) : track stack toks'
+
+    track [] (TokColon:(TokNewLine qty):toks') =
+      (TokBracket Curly Open):track (qty:[]) toks'
+
+    track (cur:stack) (TokColon:(TokNewLine indent):toks')
+      | indent > cur
+        = (TokBracket Curly Open):track (indent:cur:stack) toks'
+  
+    track (cur:stack) ((TokNewLine dedent):toks')
+      | dedent < cur
+        = (TokBracket Curly Close) : loop stack
+      where
+        loop (cur':stack')
+          | dedent < cur'
+            = (TokBracket Curly Close) : loop stack'
+        loop stack' = track stack' toks'
+  
+    -- TODO: TokArrow
+
+    track stack (tok:toks') = tok:track stack toks'
 
 -- TODO: monadic lexer for error handling?
 -- TODO: line, column number tracking
@@ -295,6 +331,33 @@ numLit kets cs = lexNum cs
         fromMaybe (else_tok_int : lexer kets more) try_double
 
 
+unlex :: Token -> String
+unlex tok = ' ':(fromMaybe ".???." $ space <|> ident <|> literal <|> simple)
+  where
+    space = case tok of
+      (TokBracket Curly Open) -> Just $ "{\n"
+      (TokBracket Curly Close) -> Just $ "\n}\n"
+      (TokNewLine qty) -> Just $ ";\n" ++ (replicate qty ' ')
+      _ -> Nothing
+    ident = case tok of
+      (TokIDENTIFIER i)   -> Just i
+      (TokDOLLAR_IDENT i) -> Just $ "$" ++ i
+      (TokAT_IDENT i)     -> Just $ "@" ++ i
+      (TokVERB_ASSIGN v)  -> Just $ v ++ "="
+      _ -> Nothing
+    literal = case tok of
+      (TokChar '\'') -> Just "'\\''"
+      (TokChar c) -> Just $ "'" ++ [c] ++ "'"
+      (TokInt i) -> Just $ show i
+      (TokDouble d) -> Just $ show d
+      (TokString s) | not $ elem '"' s -> Just $ "\"" ++ s ++ "\""
+      (TokString s) -> Just $ "`" ++ s ++ "`"  -- TODO: finish
+      (TokQUASI Open s) -> Just $ "`" ++ s  -- TODO: stateful. :-/
+      (TokQUASI Close s) -> Just $ s ++ "`"
+      _ -> Nothing
+    symbols = keywords ++ brackets ++ operators ++ punctuation
+    simple = M.lookup tok $ encode symbols
+
 tag :: Token -> String
 tag (TokIDENTIFIER _) = "IDENTIFIER"
 tag (TokAT_IDENT _) = "AT_IDENT"
@@ -407,7 +470,7 @@ punctuation :: [(String, Token)]
 punctuation = [
   (";", TokSemi), (",", TokComma), (":", TokColon),
   ("::", TokStringNoun),
-  ("?", TokSuchThat), (")", TokIgnore),
+  ("?", TokSuchThat), ("_", TokIgnore),
   (".", TokCall),
   ("<-", TokSend),
   ("->", TokArrow), ("=>", TokFatArrow)]
