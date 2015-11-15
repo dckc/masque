@@ -5,7 +5,7 @@ module Masque.Lexer where
 import Data.Char
 import Data.List as L
 import Data.Map as M
-import Data.Maybe (fromMaybe, isJust, isNothing, fromJust, maybeToList)
+import Data.Maybe (fromMaybe, isJust, maybeToList)
 import Numeric (readHex)
 
 data Token
@@ -38,7 +38,9 @@ data Token
      | TokQUASI Direction String
 
      | TokBracket Shape Direction
-
+     | TokDollarBracket Shape Direction
+     | TokAtBracket Shape Direction
+ 
      | TokAssign
      | TokVERB_ASSIGN String
 
@@ -65,9 +67,11 @@ data Token
      deriving (Show, Eq, Ord)
 
 data Shape
-     = Round | Square | Curly
-     | Dollar  -- ${ }
-     | At      -- @{ }
+     = Round   -- ( )
+     | Square  -- [ ]
+     | Curly   -- { }
+     | Quasi   -- ` `
+     | Hole    -- ${ }, @{ } $id, @id
      deriving (Show, Eq, Ord)
 
 data Direction
@@ -80,46 +84,80 @@ data Direction
 -- TODO: better error reporting, a la monte_lexer.mt?
 -- TODO: tests for '\<newline>x'
 -- TODO: optimize String to Data.ByteString.Lazy.UTF8?
-lexer :: String -> [Token]
-lexer [] = []
+lexer :: [Shape] -> String -> [Token]
+lexer [] [] = []
+lexer kets [] = error $ "EOF with brackets pending: " ++ (show kets)
 
-lexer ('#':cs) = lexer rest -- Comments
+lexer (Quasi:kets) cs = quasiPart cs
+  where
+    quasiPart cs' = loop [] cs'
+    loop :: String -> String -> [Token]
+    loop _ [] = error "File ends inside quasiliteral"
+
+    -- stuff that doesn't start with @ or $ passes through
+    loop buf (ch:more)
+      | not $ elem ch ['@', '$', '`']
+      = loop (buf ++ [ch]) more
+
+    -- $$ @@ `` are escapes for @, $, 1
+    loop buf (sig1:sig2:more)
+      | elem sig1 ['@', '$', '`'] && sig2 == sig1
+        = loop (buf ++ [sig1]) more
+
+    -- $\x01 and such
+    loop buf ('$':'\\':more) = loop (buf ++ chars) after
+      where
+        (char01, after) = charConstant more
+        chars = maybeToList char01
+
+    loop buf ('`':rest)
+      = (TokQUASI Close buf) : lexer kets rest
+
+    loop buf rest -- $ or @
+      = (TokQUASI Open buf) : lexer (Hole:Quasi:kets) rest
+
+lexer kets (sigil:p:cs)
+  | elem sigil ['$', '@'] && idPart p = lexId (p:cs)
+  where
+    lexId :: String -> [Token]
+    lexId cs' =
+      let (idkw, rest) = idOrKeyword cs'
+          kets' = case kets of
+            Hole:kets'' -> kets''
+            _ -> kets
+      in
+      case idkw of
+      (Right word) ->
+        (if sigil == '@' then TokAT_IDENT word
+         else TokDOLLAR_IDENT word) : lexer kets' rest
+      (Left (kw, _)) -> error (kw ++ " is a keyword")
+
+lexer kets (c:cs) | idStart c = lexId (c:cs)
+  where
+    lexId :: String -> [Token]
+    lexId cs' = case idOrKeyword cs' of
+      (Left (_, kw), rest) -> kw : lexer kets rest
+      (Right "_", rest) -> TokIgnore : lexer kets rest
+      (Right word, '=':check:rest)
+        | elem check ['=', '>', '~']
+          -> (TokIDENTIFIER word) : lexer kets ('=':check:rest)
+      (Right word, '=':rest)
+        -> (TokVERB_ASSIGN $ word ++ ['=']) : lexer kets rest
+      (Right word, rest)
+        -> (TokIDENTIFIER word) : lexer kets rest
+
+lexer kets ('#':cs) = lexer kets rest -- Comments
   where
     (_comment, nl_rest) = span (not . (==) '\n') cs
     rest = drop 1 nl_rest  -- drop newline
 
-lexer (sp:cs) | isSpace sp = lexer cs  -- TODO: INDENT / DEDENT
+lexer kets (sp:cs) | isSpace sp = lexer kets cs  -- TODO: INDENT / DEDENT
 
-lexer (c:cs) | idStart c = lexId (c:cs)
-  where
-    lexId :: String -> [Token]
-    lexId cs' = tok : lexer rest''
-      where
-        (word, rest) = span idPart cs'
-        try_kw = M.lookup (L.map toLower word) $ decode keywords
-        -- e.g. with=
-        try_verb_assign = case (word, rest) of
-          ("_", _) -> Nothing
-          (_, '=':bad:_)
-            | elem bad ['=', '>', '~'] -> Nothing
-          (_, '=':rest')
-            | isNothing try_kw -> Just (TokVERB_ASSIGN $ word ++ ['='], rest')
-          _ -> Nothing
-
-               -- ugh... clean up isJust / fromJust
-        (tok, rest'') =
-          if isJust try_verb_assign then fromJust try_verb_assign
-          else (let tok_default =
-                      if word == "_" then TokIgnore
-                      else (TokIDENTIFIER word)
-                in fromMaybe tok_default try_kw,
-                rest)
-
-lexer (d:cs) | isDigit d = lexNum (d:cs)
+lexer kets (d:cs) | isDigit d = lexNum (d:cs)
   where
     lexNum ('0':x:h:cs')
       | elem x ['X', 'x'] && isHexDigit h =
-          (TokInt $ decodeHex digits) : lexer rest
+          (TokInt $ decodeHex digits) : lexer kets rest
           where
             (digits, rest) = span isHexDigit (h:cs')
             decodeHex s = toEnum $ fst $ head (readHex s)
@@ -133,6 +171,7 @@ lexer (d:cs) | isDigit d = lexNum (d:cs)
             where
               (frac, rest) = span isDigit (d':cs'')
           _ -> Nothing
+               -- TODO: 3e-2 is 0.03
         try_expn = case try_frac of
           (Just (_dot:_digit:_, (e:s:cs'')))
             | elem e ['E', 'e'] -> Just $ (sign ++ expn, rest)
@@ -144,71 +183,61 @@ lexer (d:cs) | isDigit d = lexNum (d:cs)
         try_double :: Maybe [Token]
         try_double = case (try_frac, try_expn) of
           ((Just (dot_frac, _)), (Just (sign_expn, rest))) ->
-            Just $ (TokDouble $ read numeral) : lexer rest
+            Just $ (TokDouble $ read numeral) : lexer kets rest
             where
               numeral = whole ++ dot_frac ++ sign_expn
           ((Just (dot_frac, rest)), Nothing) ->
-            Just $ (TokDouble $ read numeral) : lexer rest
+            Just $ (TokDouble $ read numeral) : lexer kets rest
             where
               numeral = whole ++ dot_frac
           _ -> Nothing
         else_tok_int = TokInt $ read whole
       in
-        fromMaybe (else_tok_int : lexer more) try_double
+        fromMaybe (else_tok_int : lexer kets more) try_double
 
-lexer ('"':cs) = (TokString chars) : lexer rest
+lexer kets ('"':cs) = (TokString chars) : lexer kets rest
   where
     (chars, quot_rest) = span (not . (==) '"') cs
     rest = drop 1 quot_rest  -- drop closing "
 
-lexer ('\'':cs) = charLiteral cs
+lexer kets ('\'':cs) = charLiteral cs
   where
     charLiteral ('\\':cs') = loop $ charConstant cs'
       where
         loop :: (Maybe Char, String) -> [Token]
         loop (Nothing, more) = loop $ charConstant more
-        loop (Just ch, more) = (TokChar ch) : lexer more
-    charLiteral (ch:'\'':cs') = (TokChar ch) : lexer cs'
+        loop (Just ch, more) = (TokChar ch) : lexer kets more
+    charLiteral (ch:'\'':cs') = (TokChar ch) : lexer kets cs'
     charLiteral _ = error "bad character literal"
 
-lexer ('`':cs) = quasiPart cs
-  where
-    quasiPart cs' = loop [] cs' []
-    loop :: String -> String -> [Token] -> [Token]
-    loop _ [] _ = error "File ends inside quasiliteral"
-    loop buf ('`':rest) parts = parts ++ [(TokQUASI Close buf)] ++ lexer rest
-    loop buf ('@':'@':more) parts = loop (buf ++ ['@']) more parts
-    loop buf ('$':'$':more) parts = loop (buf ++ ['$']) more parts
-    loop buf ('$':'\\':more) parts = loop (buf ++ chars) after parts
-      where
-        (char01, after) = charConstant more
-        chars = maybeToList char01
-
-    loop buf (sigil:p:cs') parts
-      | elem sigil ['$', '@'] && idPart p = lexId (p:cs')
-      where
-        lexId :: String -> [Token]
-        lexId cs'' = loop [] rest ((TokQUASI Open buf):tok:parts)
-          where
-            (word, rest) = span idPart cs''
-            tok = case M.lookup (L.map toLower word) $ decode keywords of
-              Just _ -> error $ word ++ "is a keyword"
-              Nothing -> if sigil == '@' then TokAT_IDENT word
-                         else TokDOLLAR_IDENT word
-    loop buf (ch:more) parts = loop (buf ++ [ch]) more parts
+lexer kets ('`':cs) = lexer (Quasi:kets) cs
 
 -- @@isJust/fromJust is a kludge. how to do this right?
-lexer (s1:s2:s3:cs)
-  | isJust $ try_sym = fromJust try_sym : lexer cs
+lexer kets (s1:s2:s3:cs)
+  | isJust $ try_sym = tok : lexer (shapes ++ kets) cs
   where try_sym = symbol_decode (s1:s2:s3:[])
-lexer (s1:s2:cs)
-  | isJust $ try_sym = fromJust try_sym : lexer cs
+        (tok, shapes) = openBrackets try_sym
+lexer kets (s1:s2:cs)
+  | isJust $ try_sym = tok : lexer (shapes ++ kets) cs
   where try_sym = symbol_decode (s1:s2:[])
-lexer (s1:cs)
-  | isJust $ try_sym = fromJust try_sym : lexer cs
-  where try_sym = symbol_decode (s1:[])
+        (tok, shapes) = openBrackets try_sym
 
-lexer _ = undefined -- TODO
+lexer (shape:kets) (close:cs)
+  | close == closeBracket shape
+    = lexer kets' cs
+      where kets' = case (close, kets) of
+              ('}', Hole:kets'') -> kets''
+              _ -> kets
+lexer kets (close:_cs)
+  | elem close ['}', ']', ')']
+    = error $ "mismatched close bracket: " ++ show (close, kets)
+
+lexer kets (s1:cs)
+  | isJust $ try_sym = tok : lexer (shapes ++ kets) cs
+  where try_sym = symbol_decode (s1:[])
+        (tok, shapes) = openBrackets try_sym
+
+lexer kets cs = error $ "syntax error? " ++ show (kets, cs)
 
 
 idStart :: Char -> Bool
@@ -221,6 +250,13 @@ idPart :: Char -> Bool
 idPart c | idStart c = True
 idPart c | isDigit c = True
 idPart _ = False
+
+idOrKeyword :: String -> (Either (String, Token) String, String)
+idOrKeyword cs =
+  let (word, rest) = span idPart cs in
+  case M.lookup (L.map toLower word) $ decode keywords of
+  (Just tok) -> (Left (word, tok), rest)
+  Nothing -> (Right word, rest)
 
 charConstant :: String -> (Maybe Char, String)
 charConstant more = charEscape more
@@ -301,10 +337,26 @@ brackets = [
   (")", TokBracket Round Close),
   ("[", TokBracket Square Open),
   ("]", TokBracket Square Close),
-  ("${", TokBracket Dollar Open),
-  ("@{", TokBracket At Open),
+  ("${", TokDollarBracket Curly Open),
+  ("@{", TokAtBracket Curly Open),
   ("{", TokBracket Curly Open),
   ("}", TokBracket Curly Close)]
+
+closeBracket :: Shape -> Char
+closeBracket Curly = '}'
+closeBracket Square = ']'
+closeBracket Round = ')'
+closeBracket _ = '*'
+
+openBrackets :: Maybe Token -> (Token, [Shape])
+openBrackets (Just (TokBracket shape Open))
+  = ((TokBracket shape Open), [shape])
+openBrackets (Just (TokDollarBracket shape Open))
+  = ((TokBracket shape Open), [shape])
+openBrackets (Just (TokAtBracket shape Open))
+  = ((TokBracket shape Open), [shape])
+openBrackets (Just tok) = (tok, [])
+openBrackets _ = error "don't call openBrackets with Nothing"
 
 assign_ops :: [((String, String), (String, Token))]
 assign_ops = [
