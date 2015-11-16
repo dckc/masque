@@ -403,6 +403,24 @@ keywords =
    ("var", KW_var), ("via", KW_via),
    ("when", KW_when), ("while", KW_while)]
 
+literals :: [(String, Token)]
+literals = [
+  (".char.", (TokChar 'a')),
+  (".int.", (TokInt 1)),
+  (".float64.", (TokDouble 1.0)),
+  (".String.", (TokString ""))]
+
+quasiParts :: [(String, Token)]
+quasiParts = [
+  ("QUASI_OPEN", (TokQUASI Open "")),
+  ("QUASI_CLOSE", (TokQUASI Close ""))]
+
+identifiers :: [(String, Token)]
+identifiers = [
+  ("IDENTIFIER", (TokIDENTIFIER "a")),
+  ("AT_IDENT", (TokAT_IDENT "a")),
+  ("DOLLAR_IDENT", (TokDOLLAR_IDENT "a"))]
+
 brackets :: [(String, Token)]
 brackets = [
   ("(", TokBracket Round Open),
@@ -480,3 +498,23 @@ decode vocab = fromList vocab
 
 encode :: [(String, Token)] -> M.Map Token String
 encode vocab = fromList [(tok, s) | (s, tok) <- vocab]
+
+-- happy tokens decl
+tokensDecl :: String
+tokensDecl =
+  let
+    symbols = brackets ++ operators ++ punctuation
+    quote sym = "'" ++ sym ++ "'"
+                -- project (Char 'a') = "Char $$"
+    project tok = (unwords $ init $ words (show tok)) ++ " $$"
+    col2 = 16
+    pad s = "  " ++ s ++ (replicate (col2 - length s) ' ')
+    decl f g (s, tok) = pad (f s) ++ " { " ++ (g tok) ++ " } "
+    toLines f g items = [decl f g item | item <- items]
+    lines_kw = toLines id show keywords
+    lines_sym = toLines quote show symbols
+    lines_lit = toLines quote project literals
+    lines_other = toLines id project (identifiers ++ quasiParts)
+  in
+    "%token\n" ++ unlines (lines_kw ++ lines_sym ++ lines_lit ++ lines_other)
+
