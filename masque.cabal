@@ -22,21 +22,25 @@ executable masque
   other-modules:       Masque.AST
                      , Masque.BAST
                      , Masque.Objects
+                     , Masque.Lexer
+                     , Masque.Parser
   other-extensions:    DeriveDataTypeable,
                        DeriveGeneric,
                        RecursiveDo,
                        TemplateHaskell,
                        ViewPatterns,
                        FlexibleContexts
-  build-depends:       base >=4.6
-                     , bound == 1.0.*
+  build-tools:         happy
+  build-depends:       GenericPretty == 1.2.*
+                     , array >= 0.5.0.0
+                     , base >=4.6
                      , binary == 0.7.*
+                     , bound == 1.0.*
                      , bytestring == 0.10.*
                      , containers == 0.5.*
                      , data-binary-ieee754 == 0.4.*
                      , either == 4.3.*
                      , free == 4.10.*
-                     , GenericPretty == 1.2.*
                      , lens == 4.7.*
                      , mtl == 2.2.*
                      , network == 2.6.*
