@@ -2,6 +2,7 @@ module Main where
 
 import Control.Lens
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.State
 import Data.Binary.Get (runGet)
 import qualified Data.ByteString.Lazy as BSL
 import Data.List.NonEmpty (NonEmpty(..))
@@ -13,8 +14,10 @@ import Text.PrettyPrint.GenericPretty (Out, pp)
 
 import Masque.Monte
 import Masque.AST
-import Masque.ASTIO
+import Masque.Deserialize
 import Masque.Eval
+import Masque.Lexer
+import Masque.Parser
 
 -- | Debugging
 
@@ -29,10 +32,11 @@ showEnv s = do
 -- | Script evaluation
 
 loadNode :: BSL.ByteString -> IO Expr
-loadNode bs = let node = optimize $ runGet getNode bs in do
-    putStrLn "Loaded and optimized AST:"
-    pp node
-    return node
+loadNode bs = do
+  let (expr, _) = runGet (runStateT getExpr emptyContext) bs
+  putStrLn "Loaded and optimized AST:"
+  pp expr
+  return expr
 
 optimize :: Expr -> Expr
 optimize e = e  -- TODO. see Optimize.hs
@@ -45,15 +49,27 @@ runAST prelude envs bs = do
 runFile :: Env -> NonEmpty Env -> FilePath -> IO (Either Err Obj, MonteState, ())
 runFile prelude envs path = do
     bs <- BSL.readFile path
-    runAST prelude envs bs
+    if monteMagic `BSL.isPrefixOf` bs
+      then runAST prelude envs (BSL.drop (BSL.length monteMagic) bs)
+      else fail "bad magic"
+
 
 main :: IO ()
-main = withSocketsDo $ do
+main = do
+  [fileName] <- getArgs
+  parseFile fileName
+
+main2 :: IO ()
+main2 = withSocketsDo $ do
+    [fileName] <- getArgs
+    loadAndRunFile fileName
+
+loadAndRunFile :: String -> IO ()
+loadAndRunFile fileName = do
     let coreEnv = finalize coreScope :| []
     (preludeOrErr, _, _) <- runFile (Env M.empty) coreEnv "prelude.mast"
     prelude <- case preludeOrErr of
         Right p  -> return p
         Left err -> print err >> exitWith (ExitFailure 1)
-    [fileName] <- getArgs
     result <- runFile (mapToScope prelude) coreEnv fileName
     print $ result ^. _1

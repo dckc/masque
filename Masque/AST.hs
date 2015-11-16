@@ -3,7 +3,7 @@
 
 module Masque.AST where
 
-import Text.PrettyPrint.GenericPretty
+import Text.PrettyPrint.GenericPretty (Generic, Out, pp)
 import Data.Data
 
 data Expr = CharExpr Char
@@ -44,3 +44,10 @@ data Patt = IgnorePatt (Maybe Expr)
 
 data NamedPatt = NamedPatt Expr Patt Expr
     deriving (Eq, Show, Read, Data, Typeable, Generic)
+
+instance Out Expr
+instance Out NamedExpr
+instance Out Method
+instance Out Matcher
+instance Out Patt
+instance Out NamedPatt

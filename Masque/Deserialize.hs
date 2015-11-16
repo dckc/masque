@@ -8,16 +8,28 @@ import Data.Binary.Get
 import Data.Binary.IEEE754
 import Data.Bits
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable
 import Data.List (genericIndex)
 
 import Masque.AST
+
+monteMagic :: BSL.ByteString
+monteMagic = BSL.pack $ map (toEnum . fromEnum) "Mont\xe0MASTx00"
 
 data MASTContext = MASTContext {
   ctxExprs :: [Expr],
   ctxMethods :: [Method],
   ctxMatchers :: [Matcher],
   ctxPatts :: [Patt]
+  }
+                 deriving Show
+
+emptyContext = MASTContext {
+  ctxExprs = [],
+  ctxMethods = [],
+  ctxMatchers = [],
+  ctxPatts = []
   }
 
 getVarInt :: StateT MASTContext Get Integer
