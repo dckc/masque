@@ -1,13 +1,38 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 module Masque.Parser where
 
 import Control.Monad
 import Control.Applicative (Applicative(..), Alternative(..),
                             (<$>), (<*), (*>))
+import Data.Data
+import Text.PrettyPrint.GenericPretty (Generic, Out, pp)
 
 import Masque.Lexer (Token(..), Shape(..), Direction(..),
                      lexer, offside,
                      keywords, brackets, operators, punctuation)
-import Masque.AST (Expr(..))
+import Masque.AST (NamedExpr, Method(..), Matcher(..), Patt(..))
+
+
+data Expr = CharExpr Char
+          | DoubleExpr Double
+          | IntExpr Integer
+          | StrExpr String
+          | ExitExpr String (Maybe Expr) -- String? only 3 possibilities
+          | AssignExpr String Expr
+          | BindingExpr String
+          | CallExpr Expr String [Expr] [NamedExpr]
+          | DefExpr Patt Expr Expr
+          | EscapeOnlyExpr Patt Expr
+          | EscapeExpr Patt Expr Patt Expr
+          | FinallyExpr Expr Expr
+          | HideExpr Expr
+          | IfExpr Expr Expr Expr
+          | NounExpr String
+          | ObjectExpr String Patt Expr [Expr] [Method] [Matcher]
+          | SequenceExpr [Expr]
+          | TryExpr Expr Patt Expr
+    deriving (Eq, Show, Read, Data, Typeable, Generic)
 
 -- adapted from http://dev.stephendiehl.com/fun/002_parsers.html
 newtype Parser i o = Parser { parse :: [i] -> [(o, [i])] }
@@ -85,14 +110,16 @@ seq1 p = some_p <* (option semi)
 expr :: TokenParser Expr
 expr =
       assign
-      <|> (exit0 <$> exitKw <* (parens <|> semi))
-      <|> (exit1 <$> exitKw <*> expr)
-      where
-        exitKw = (tok "continue") <|> (tok "break") <|> (tok "return")
-        parens = (tok "(") *> (tok ")")
-        semi = tok ";"
-        exit1 kw e = CallExpr (NounExpr kw) "run" [e] [] -- @@
-        exit0 kw = CallExpr (NounExpr kw) "run" [] [] -- @@
+      <|> exitExpr
+
+exitExpr :: TokenParser Expr
+exitExpr = ExitExpr <$> expr_2 <*> expr_3
+  where
+    expr_2 = (tok "continue") <|> (tok "break") <|> (tok "return")
+    expr_3 :: TokenParser (Maybe Expr)
+    expr_3 = expr_2_3_1 <|> expr_2_3_2
+    expr_3_1 = (tok "(") *> (tok ")") *> return Nothing
+    expr_3_2 = return <$> expr
 
 assign = literal  -- @@
 
