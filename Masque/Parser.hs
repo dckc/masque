@@ -6,12 +6,11 @@ import Control.Monad
 import Control.Applicative (Applicative(..), Alternative(..),
                             (<$>), (<*), (*>))
 import Data.Data
-import Text.PrettyPrint.GenericPretty (Generic, Out, pp)
+import Text.PrettyPrint.GenericPretty (Generic, Out)
 
-import Masque.Lexer (Token(..), Shape(..), Direction(..),
+import Masque.Lexer (Token(..),
                      lexer, offside,
                      keywords, brackets, operators, punctuation)
-import Masque.AST (NamedExpr, Method(..), Matcher(..), Patt(..))
 
 
 data Expr = CharExpr Char
@@ -22,7 +21,7 @@ data Expr = CharExpr Char
           | AssignExpr String Expr
           | BindingExpr String
           | CallExpr Expr String [Expr] [NamedExpr]
-          | DefExpr Patt Expr Expr
+          | DefExpr Patt (Maybe Expr) Expr
           | EscapeOnlyExpr Patt Expr
           | EscapeExpr Patt Expr Patt Expr
           | FinallyExpr Expr Expr
@@ -34,6 +33,34 @@ data Expr = CharExpr Char
           | TryExpr Expr Patt Expr
     deriving (Eq, Show, Read, Data, Typeable, Generic)
 
+data Matcher = Matcher Patt Expr
+    deriving (Eq, Show, Read, Data, Typeable, Generic)
+
+data Method = Method String String [Patt] [NamedPatt] Expr Expr
+    deriving (Eq, Show, Read, Data, Typeable, Generic)
+
+data NamedExpr = NamedExpr Expr Expr
+    deriving (Eq, Show, Read, Data, Typeable, Generic)
+
+data Patt = IgnorePatt (Maybe Expr)
+          | BindPatt String
+          | FinalPatt String (Maybe Expr)
+          | ListPatt [Patt]
+          | VarPatt String (Maybe Expr)
+          | ViaPatt Expr Patt
+    deriving (Eq, Show, Read, Data, Typeable, Generic)
+
+data NamedPatt = NamedPatt Expr Patt Expr
+    deriving (Eq, Show, Read, Data, Typeable, Generic)
+
+instance Out Expr
+instance Out NamedExpr
+instance Out Method
+instance Out Matcher
+instance Out Patt
+instance Out NamedPatt
+
+
 -- adapted from http://dev.stephendiehl.com/fun/002_parsers.html
 newtype Parser i o = Parser { parse :: [i] -> [(o, [i])] }
 
@@ -41,7 +68,8 @@ runParser :: (Show i) => Parser i o -> [i] -> o
 runParser p input = case parse p input of
   [(res, [])] -> res
   [(_, rs)] -> error $ "Parse error at: " ++ show (take 3 rs)
-  _ -> error "Parse error"  -- TODO: better error messages (with Parsec?)
+  (_, rs):_ -> error $ "Parse error at: " ++ show (take 3 rs)
+  [] -> error "Parse error TODO"  -- TODO: better error messages (with Parsec?)
 
 item :: Parser i i
 item = Parser $ \s ->
@@ -86,8 +114,10 @@ alt  p q = Parser $ \s ->
     []     -> parse q s
     res    -> res
 
-option :: Parser i a -> Parser i a
-option p = p <|> failure
+optionMaybe :: Parser i a -> (Parser i (Maybe a))
+optionMaybe p =
+  Just <$> p
+  <|> return Nothing
 
 many1 :: Parser i a -> Parser i [a]
 many1 p = some_p
@@ -98,12 +128,12 @@ many1 p = some_p
 type TokenParser = Parser Token
 
 expression :: TokenParser [Expr]
-expression = seq1 expr
+expression = seq1 blockExpr
 
 seq1 :: TokenParser o -> TokenParser [o]
-seq1 p = some_p <* (option semi)
+seq1 p = some_p <* (optionMaybe semi)
   where
-    many_p = (many1 semi) *> some_p <|> pure []
+    many_p = ((many1 semi) *> some_p) <|> return []
     some_p = (:) <$> p <*> many_p
     semi = tok ";"
 
@@ -112,21 +142,89 @@ expr =
       assign
       <|> exitExpr
 
+{-
+DefExpr ::= Sequence('def',
+          NonTerminal('pattern'),
+          Optional(Sequence("exit", NonTerminal('order'))),
+          Sequence(":=", NonTerminal('assign')))
+-}
+defExpr :: TokenParser Expr
+defExpr = DefExpr <$> ((tok "def") *> pattern) <*> defExpr_3 <*> defExpr_4
+  where
+    defExpr_3 = defExpr_3_1
+      <|> defExpr_3_2
+      -- TODO: re-order optional thingies
+    defExpr_3_1 = Just <$> ((tok "exit") *> order)
+    defExpr_3_2 = return Nothing
+    defExpr_4 = (tok ":=") *> assign
+
+order :: TokenParser Expr
+order = literal -- @@
+
+pattern :: TokenParser Patt
+pattern = finalPattern  -- @@
+
+{-
+FinalPatt ::= Sequence(Choice(0, "IDENTIFIER", ".String."),
+         NonTerminal('guardOpt'))
+-}
+finalPattern :: TokenParser Patt
+finalPattern = FinalPatt <$> name <*> guardOpt
+
+
+{-
+guardOpt ::= Optional(Sequence(
+ ':',
+ Choice(
+     0,
+     Sequence('IDENTIFIER',
+                 Optional(Sequence('[',
+                                   OneOrMore(NonTerminal('expr'), ','),
+                                   ']'))),
+     Sequence('(', NonTerminal('expr'), ')'))))
+-}
+guardOpt :: TokenParser (Maybe Expr)
+guardOpt = guardOpt_1
+  <|> guardOpt_2
+  where
+    guardOpt_1 :: TokenParser (Maybe Expr)
+    guardOpt_1 = return Nothing
+    guardOpt_2 :: TokenParser (Maybe Expr)
+    guardOpt_2 = Just <$> ((tok ":") *> guardOpt_2_2)
+    guardOpt_2_2 :: TokenParser Expr
+    guardOpt_2_2 = guardOpt_2_2_1
+      <|> guardOpt_2_2_2
+    guardOpt_2_2_1 = maybeIndex <$> (tok "IDENTIFIER") <*> guardOpt_2_2_1_2
+    guardOpt_2_2_1_2 :: TokenParser (Maybe [Expr])
+    guardOpt_2_2_1_2 = guardOpt_2_2_1_2_1
+      <|> guardOpt_2_2_1_2_2
+    guardOpt_2_2_1_2_1 = return Nothing
+    guardOpt_2_2_1_2_2 = Just <$> ((tok "[") *> guardOpt_2_2_1_2_2_2 <* (tok "]"))
+    guardOpt_2_2_1_2_2_2 :: TokenParser [Expr]
+    guardOpt_2_2_1_2_2_2 = return <$> expr
+      <|> (flip (:)) <$> guardOpt_2_2_1_2_2_2 <*> ((tok ",") *> expr)
+    guardOpt_2_2_2 = (tok "(") *> expr <* (tok ")")
+    maybeIndex n Nothing = (NounExpr n)
+    maybeIndex n (Just args) = CallExpr (NounExpr n) "get" args []
+
 exitExpr :: TokenParser Expr
 exitExpr = ExitExpr <$> expr_2 <*> expr_3
   where
     expr_2 = (tok "continue") <|> (tok "break") <|> (tok "return")
     expr_3 :: TokenParser (Maybe Expr)
-    expr_3 = expr_2_3_1 <|> expr_2_3_2
+    expr_3 = expr_3_1 <|> expr_3_2
     expr_3_1 = (tok "(") *> (tok ")") *> return Nothing
     expr_3_2 = return <$> expr
 
+assign :: TokenParser Expr
 assign = literal  -- @@
 
+blockExpr :: TokenParser Expr
 blockExpr =
-  hideExpr
+  defExpr
+  <|> hideExpr
   <|> expr
-  -- @@ lots more
+  <|> failure -- @@ lots more
 
 hideExpr :: TokenParser Expr
 hideExpr = do
@@ -142,6 +240,17 @@ literal = item >>= \t -> case t of
   (TokDouble d) -> return $ DoubleExpr d
   (TokString s) -> return $ StrExpr s
   _ -> failure
+
+name :: TokenParser String
+name = ident <|> double_colon_str
+  where
+    ident = item >>= \t -> case t of
+      (TokIDENTIFIER n) -> return $ n
+      _ -> failure
+    double_colon_str = (tok "::") *> str
+    str = item >>= \t -> case t of
+      (TokString s) -> return $ s
+      _ -> failure
 
 tok :: String -> TokenParser String
 tok s = item >>= \t ->
