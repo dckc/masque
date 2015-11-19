@@ -21,6 +21,10 @@ data Expr = CharExpr Char
           | AssignExpr String Expr
           | BindingExpr String
           | CallExpr Expr String [Expr] [NamedExpr]
+          | ListExpr [Expr]
+          | MapExpr [(Expr, Expr)]
+          | RangeExpr Expr String Expr  -- String?
+          | BinaryExpr Expr String Expr  -- String?
           | DefExpr Patt (Maybe Expr) Expr
           | EscapeOnlyExpr Patt Expr
           | EscapeExpr Patt Expr Patt Expr
@@ -71,7 +75,7 @@ runParser p input = case parse p input of
   (_, rs):_ -> error $ "Parse error at: " ++ show (take 3 rs)
   [] -> error "Parse error TODO"  -- TODO: better error messages (with Parsec?)
 
-item :: Parser i i
+item :: Parser i i  -- TODO: rename to anyToken
 item = Parser $ \s ->
   case s of
    []     -> []
@@ -135,125 +139,238 @@ seq1 p = some_p <* (optionMaybe semi)
   where
     many_p = ((many1 semi) *> some_p) <|> return []
     some_p = (:) <$> p <*> many_p
-    semi = tok ";"
+    semi = symbol ";"
+
+sepBy :: TokenParser o -> TokenParser x -> TokenParser [o]
+sepBy p sep = some_p <|> return []
+  where
+    many_p = (sep *> some_p) <|> return []
+    some_p = (:) <$> p <*> many_p
+
+wrapSequence :: TokenParser Expr -> TokenParser x -> TokenParser Expr
+wrapSequence p sep = do
+  exprs <- sepBy p sep
+  return $ case exprs of
+    [] -> SequenceExpr []
+    [expr] -> expr
+    _ -> SequenceExpr exprs
+
+pair :: a -> b -> (a, b)
+pair a b = (a, b)
+
 
 expr :: TokenParser Expr
 expr =
       assign
-      <|> exitExpr
-
-{-
-DefExpr ::= Sequence('def',
-          NonTerminal('pattern'),
-          Optional(Sequence("exit", NonTerminal('order'))),
-          Sequence(":=", NonTerminal('assign')))
--}
-defExpr :: TokenParser Expr
-defExpr = DefExpr <$> ((tok "def") *> pattern) <*> defExpr_3 <*> defExpr_4
-  where
-    defExpr_3 = defExpr_3_1
-      <|> defExpr_3_2
-      -- TODO: re-order optional thingies
-    defExpr_3_1 = Just <$> ((tok "exit") *> order)
-    defExpr_3_2 = return Nothing
-    defExpr_4 = (tok ":=") *> assign
-
-order :: TokenParser Expr
-order = literal -- @@
-
-pattern :: TokenParser Patt
-pattern = finalPattern  -- @@
-
-{-
-FinalPatt ::= Sequence(Choice(0, "IDENTIFIER", ".String."),
-         NonTerminal('guardOpt'))
--}
-finalPattern :: TokenParser Patt
-finalPattern = FinalPatt <$> name <*> guardOpt
-
-
-{-
-guardOpt ::= Optional(Sequence(
- ':',
- Choice(
-     0,
-     Sequence('IDENTIFIER',
-                 Optional(Sequence('[',
-                                   OneOrMore(NonTerminal('expr'), ','),
-                                   ']'))),
-     Sequence('(', NonTerminal('expr'), ')'))))
--}
-guardOpt :: TokenParser (Maybe Expr)
-guardOpt = guardOpt_1
-  <|> guardOpt_2
-  where
-    guardOpt_1 :: TokenParser (Maybe Expr)
-    guardOpt_1 = return Nothing
-    guardOpt_2 :: TokenParser (Maybe Expr)
-    guardOpt_2 = Just <$> ((tok ":") *> guardOpt_2_2)
-    guardOpt_2_2 :: TokenParser Expr
-    guardOpt_2_2 = guardOpt_2_2_1
-      <|> guardOpt_2_2_2
-    guardOpt_2_2_1 = maybeIndex <$> (tok "IDENTIFIER") <*> guardOpt_2_2_1_2
-    guardOpt_2_2_1_2 :: TokenParser (Maybe [Expr])
-    guardOpt_2_2_1_2 = guardOpt_2_2_1_2_1
-      <|> guardOpt_2_2_1_2_2
-    guardOpt_2_2_1_2_1 = return Nothing
-    guardOpt_2_2_1_2_2 = Just <$> ((tok "[") *> guardOpt_2_2_1_2_2_2 <* (tok "]"))
-    guardOpt_2_2_1_2_2_2 :: TokenParser [Expr]
-    guardOpt_2_2_1_2_2_2 = return <$> expr
-      <|> (flip (:)) <$> guardOpt_2_2_1_2_2_2 <*> ((tok ",") *> expr)
-    guardOpt_2_2_2 = (tok "(") *> expr <* (tok ")")
-    maybeIndex n Nothing = (NounExpr n)
-    maybeIndex n (Just args) = CallExpr (NounExpr n) "get" args []
-
-exitExpr :: TokenParser Expr
-exitExpr = ExitExpr <$> expr_2 <*> expr_3
-  where
-    expr_2 = (tok "continue") <|> (tok "break") <|> (tok "return")
-    expr_3 :: TokenParser (Maybe Expr)
-    expr_3 = expr_3_1 <|> expr_3_2
-    expr_3_1 = (tok "(") *> (tok ")") *> return Nothing
-    expr_3_2 = return <$> expr
-
-assign :: TokenParser Expr
-assign = literal  -- @@
+--      <|> exitExpr
 
 blockExpr :: TokenParser Expr
-blockExpr =
-  defExpr
-  <|> hideExpr
+blockExpr = defExpr
   <|> expr
   <|> failure -- @@ lots more
 
-hideExpr :: TokenParser Expr
-hideExpr = do
-  es <- (tok "{") *> (seq1 expr) <* (tok "}")
-  return $ HideExpr $ case es of
-    [e] -> e
-    es' -> SequenceExpr es'
+{-
+DefExpr ::= Sequence(Sigil('def', NonTerminal('pattern')),
+         Optional(Sigil("exit", NonTerminal('order'))),
+         Sigil(":=", NonTerminal('assign')))
+-}
+defExpr = DefExpr <$> defExpr_1 <*> defExpr_2 <*> defExpr_3
+  where
+    defExpr_1 = ((symbol "def") *> pattern)
+    defExpr_2 = defExpr_2_1
+      <|> defExpr_2_2
+    defExpr_2_1 = return Nothing
+    defExpr_2_2 = Just <$> ((symbol "exit") *> order)
+    defExpr_3 = ((symbol ":=") *> assign)
 
-literal :: TokenParser Expr
-literal = item >>= \t -> case t of
-  (TokChar c) -> return $ CharExpr c
-  (TokInt i) -> return $ IntExpr i
-  (TokDouble d) -> return $ DoubleExpr d
-  (TokString s) -> return $ StrExpr s
+
+pattern = finalPatt -- @@
+
+guardOpt = return Nothing
+
+{-
+FinalPatt ::= Sequence(Choice(0, "IDENTIFIER", Sigil("::", ".String.")),
+         NonTerminal('guardOpt'))
+-}
+finalPatt = FinalPatt <$> finalPatt_1 <*> guardOpt
+  where
+    finalPatt_1 = parseIdentifier
+      <|> finalPatt_1_2
+    finalPatt_1_2 = ((symbol "::") *> parseString)
+
+assign :: TokenParser Expr
+assign = order  -- @@
+
+
+-- #################################################
+
+{-
+order ::= Choice(0,
+  NonTerminal('BinaryExpr'),
+  NonTerminal('RangeExpr'),
+  NonTerminal('CompareExpr'),
+  NonTerminal('prefix'))
+-}
+order = binaryExpr
+  <|> rangeExpr
+--  <|> compareExpr
+  <|> prefix
+
+prefix = prim -- @@
+
+{-
+BinaryExpr ::= Choice(0,
+  Sequence(NonTerminal('prefix'),
+           "**", NonTerminal('order')),
+  Sequence(NonTerminal('prefix'),
+           Choice(0, "*", "/", "//", "%"), NonTerminal('order')),
+  Sequence(NonTerminal('prefix'),
+           Choice(0, "+", "-"), NonTerminal('order')),
+  Sequence(NonTerminal('prefix'),
+           Choice(0, "<<", ">>"), NonTerminal('order')))
+-}
+binaryExpr = BinaryExpr <$> prefix <*> (symbol "**") <*> order
+  <|> BinaryExpr <$> prefix <*> binaryExpr_2_2 <*> order
+  <|> BinaryExpr <$> prefix <*> binaryExpr_3_2 <*> order
+  <|> BinaryExpr <$> prefix <*> binaryExpr_4_2 <*> order
+  where
+    binaryExpr_2_2 = (symbol "*")
+      <|> (symbol "/")
+      <|> (symbol "//")
+      <|> (symbol "%")
+    binaryExpr_3_2 = (symbol "+")
+      <|> (symbol "-")
+    binaryExpr_4_2 = (symbol "<<")
+      <|> (symbol ">>")
+
+{-
+RangeExpr ::= Sequence(NonTerminal('prefix'),
+         Choice(0, "..", "..!"), NonTerminal('order'))
+-}
+rangeExpr = RangeExpr <$> prefix <*> rangeExpr_2 <*> order
+  where
+    rangeExpr_2 = (symbol "..")
+      <|> (symbol "..!")
+
+{-
+prim ::= Choice(
+ 0,
+ NonTerminal('LiteralExpr'),
+ NonTerminal('quasiliteral'),
+ NonTerminal('NounExpr'),
+ Brackets("(", NonTerminal('expr'), ")"),
+ NonTerminal('HideExpr'),
+ NonTerminal('MapComprehensionExpr'),
+ NonTerminal('ListComprehensionExpr'),
+ NonTerminal('MapExpr'),
+ NonTerminal('ListExpr'))
+-}
+prim = literalExpr
+-- @@  <|> quasiliteral
+  <|> nounExpr
+  <|> prim_4
+  <|> hideExpr
+-- @@  <|> mapComprehensionExpr
+-- @@  <|> listComprehensionExpr
+  <|> mapExpr
+  <|> listExpr
+  where
+    prim_4 = ((symbol "(") *> expr <* (symbol ")"))
+
+{-
+HideExpr ::= Brackets("{", SepBy(NonTerminal('expr'), ';', fun='wrapSequence'), "}")
+-}
+hideExpr = HideExpr <$> ((symbol "{") *> hideExpr_2 <* (symbol "}"))
+  where
+    hideExpr_2 = (wrapSequence expr (symbol ";"))
+
+{-
+NounExpr ::= Choice(0, "IDENTIFIER", Sigil("::", ".String."))
+-}
+nounExpr = NounExpr <$> parseIdentifier
+  <|> NounExpr <$> nounExpr_2
+  where
+    nounExpr_2 = ((symbol "::") *> parseString)
+
+{-
+IntExpr ::= Sequence(Terminal(".int."))
+-}
+intExpr = IntExpr <$> parseint
+
+{-
+DoubleExpr ::= Sequence(Terminal(".float64."))
+-}
+doubleExpr = DoubleExpr <$> parsefloat64
+
+{-
+CharExpr ::= Sequence(Terminal(".char."))
+-}
+charExpr = CharExpr <$> parsechar
+
+{-
+StrExpr ::= Sequence(Terminal(".String."))
+-}
+strExpr = StrExpr <$> parseString
+
+{-
+ListExpr ::= Brackets("[", SepBy(NonTerminal('expr'), ','), "]")
+-}
+listExpr = ListExpr <$> ((symbol "[") *> listExpr_2 <* (symbol "]"))
+  where
+    listExpr_2 = (sepBy expr (symbol ","))
+
+{-
+MapExpr ::= Brackets("[",
+         SepBy(Pair(NonTerminal('expr'), "=>", NonTerminal('expr')),
+               ','),
+         "]")
+-}
+mapExpr = MapExpr <$> ((symbol "[") *> mapExpr_2 <* (symbol "]"))
+  where
+    mapExpr_2 = (sepBy mapExpr_2_2_1 (symbol ","))
+    mapExpr_2_2_1 = pair <$> expr <*> ((symbol "=>") *> expr)
+
+{-
+LiteralExpr ::= Choice(0,
+       NonTerminal('StrExpr'),
+       NonTerminal('IntExpr'),
+       NonTerminal('DoubleExpr'),
+       NonTerminal('CharExpr'))
+-}
+literalExpr = strExpr
+  <|> intExpr
+  <|> doubleExpr
+  <|> charExpr
+-- #################################################
+
+
+parsechar :: TokenParser Char
+parsechar = item >>= \t -> case t of
+  (TokChar c) -> return $ c
   _ -> failure
 
-name :: TokenParser String
-name = ident <|> double_colon_str
-  where
-    ident = item >>= \t -> case t of
-      (TokIDENTIFIER n) -> return $ n
-      _ -> failure
-    double_colon_str = (tok "::") *> str
-    str = item >>= \t -> case t of
-      (TokString s) -> return $ s
-      _ -> failure
+parseint :: TokenParser Integer
+parseint = item >>= \t -> case t of
+  (TokInt i) -> return $ i
+  _ -> failure
 
-tok :: String -> TokenParser String
-tok s = item >>= \t ->
+parsefloat64 :: TokenParser Double
+parsefloat64 = item >>= \t -> case t of
+  (TokDouble d) -> return $ d
+  _ -> failure
+
+parseString :: TokenParser String
+parseString = item >>= \t -> case t of
+  (TokString s) -> return $ s
+  _ -> failure
+
+parseIdentifier :: TokenParser String
+parseIdentifier = item >>= \t -> case t of
+  (TokIDENTIFIER s) -> return $ s
+  _ -> failure
+
+symbol :: String -> TokenParser String
+symbol s = item >>= \t ->
   let
     v =  keywords ++ brackets ++ operators ++ punctuation
   in
