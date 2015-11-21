@@ -1,6 +1,7 @@
 module Main where
 
 import Control.Lens
+import Control.Monad (forM)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State
 import Data.Binary.Get (runGet)
@@ -12,12 +13,14 @@ import System.Environment (getArgs)
 import System.Exit (ExitCode(ExitFailure), exitWith)
 import Text.PrettyPrint.GenericPretty (Out, pp)
 
-import Masque.Monte
-import Masque.AST
-import Masque.Deserialize
-import Masque.Eval
-import Masque.Lexer
-import Masque.Parser
+import Masque.Monte (Monte, runMonte, MonteState(..), Err,
+                     Env(..), unEnv, envStack,
+                     Obj)
+import Masque.AST (Expr)
+import Masque.Deserialize (monteMagic, emptyContext, getExpr)
+import Masque.Eval (mapToScope, coreScope, finalize, eval)
+import Masque.Parser (parseFile, parseSource)
+import Masque.Desugar (desugar)
 
 -- | Debugging
 
@@ -41,28 +44,45 @@ loadNode bs = do
 optimize :: Expr -> Expr
 optimize e = e  -- TODO. see Optimize.hs
 
-runAST :: Env -> NonEmpty Env -> BSL.ByteString -> IO (Either Err Obj, MonteState, ())
-runAST prelude envs bs = do
-    node <- loadNode bs
-    runMonte (eval node) prelude envs
+runAST :: Env -> NonEmpty Env -> Expr -> IO (Either Err Obj, MonteState, ())
+runAST prelude envs expr = do
+    runMonte (eval expr) prelude envs
+
+runSource :: String -> IO ()
+runSource s = do
+  _ <- forM (map desugar $ parseSource s) runExpr
+  return ()
+
+runExpr :: Expr -> IO ()
+runExpr e = let coreEnv = finalize coreScope :| [] in do
+  answer <- runAST (Env M.empty) coreEnv e
+  case answer of
+    ((Right obj), _, _) -> print obj
+    _ -> print answer
 
 runFile :: Env -> NonEmpty Env -> FilePath -> IO (Either Err Obj, MonteState, ())
 runFile prelude envs path = do
     bs <- BSL.readFile path
-    if monteMagic `BSL.isPrefixOf` bs
-      then runAST prelude envs (BSL.drop (BSL.length monteMagic) bs)
-      else fail "bad magic"
-
+    if monteMagic `BSL.isPrefixOf` bs then do
+      node <- loadNode (BSL.drop (BSL.length monteMagic) bs)
+      runAST prelude envs node
+    else fail "bad magic"
 
 main :: IO ()
-main = do
+main = withSocketsDo $ do
   [fileName] <- getArgs
-  parseFile fileName
-
-main2 :: IO ()
-main2 = withSocketsDo $ do
-    [fileName] <- getArgs
-    loadAndRunFile fileName
+  case fileName of
+    mt | mt `endswith` ".mt" -> do
+           e <- parseFile mt
+           print e
+    mast | mast `endswith` ".mast" -> loadAndRunFile mast
+    _ -> error "not .mt nor .mast"
+  where
+    endswith :: String -> String -> Bool
+    endswith haystack needle = (reverse haystack) `startswith` (reverse needle)
+    startswith [] [] = True
+    startswith (c:h) (c':n) | c == c' = startswith h n
+    startswith _ _ = False
 
 loadAndRunFile :: String -> IO ()
 loadAndRunFile fileName = do

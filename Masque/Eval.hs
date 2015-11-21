@@ -28,6 +28,7 @@ eval (CharExpr c) = return $ CharObj c
 eval (DoubleExpr d) = return $ DoubleObj d
 eval (IntExpr i) = return $ IntObj i
 eval (StrExpr s) = return $ StrObj s
+{- @@@@
 eval (AssignExpr name node) = do
     obj <- eval node
     binding <- getBinding name
@@ -79,6 +80,7 @@ eval (SequenceExpr ns) = do
 eval (TryExpr n p h) = scoped $ catchError (eval n) $ \_ -> do
     success <- unify NullObj p
     if success then eval h else left Unknown
+-}
 eval n = error $ "Couldn't evaluate node: " ++ show n
 
 
