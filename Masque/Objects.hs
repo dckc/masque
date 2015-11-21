@@ -42,7 +42,7 @@ sameEver NullObj NullObj = True
 sameEver (BoolObj x) (BoolObj y) = x == y
 sameEver (IntObj x) (IntObj y) = x == y
 sameEver (StrObj x) (StrObj y) = x == y
-sameEver (DoubleObj x) (DoubleObj y) = undefined  -- TODO: NaN
+sameEver (DoubleObj x) (DoubleObj y) = x == y
 sameEver (OpaqueObj x _ _) (OpaqueObj y _ _ ) = x == y
 sameEver _ _ = False
 
