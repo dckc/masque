@@ -9,6 +9,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Either (left, bracketEitherT)
 import Data.Foldable (toList)
 import Data.IORef (writeIORef)
+import Data.Maybe (fromMaybe)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map as M
 import qualified Data.Sequence as Seq
@@ -28,7 +29,6 @@ eval (CharExpr c) = return $ CharObj c
 eval (DoubleExpr d) = return $ DoubleObj d
 eval (IntExpr i) = return $ IntObj i
 eval (StrExpr s) = return $ StrObj s
-{- @@@@
 eval (AssignExpr name node) = do
     obj <- eval node
     binding <- getBinding name
@@ -45,7 +45,9 @@ eval (CallExpr o v as nas) = do
     call o' v as'
 eval (DefExpr p ej expr) = do
     rvalue <- eval expr
-    ej' <- eval ej
+    ej' <- case ej of
+      Just ex -> eval ex
+      _ -> return NullObj
     unifyEject rvalue ej' p
     return rvalue
 eval (EscapeExpr p n _ _) = scoped $ do
@@ -62,6 +64,7 @@ eval (IfExpr i t f) = do
     scoped $ eval $ if b then t else f
 eval (HideExpr n) = scoped $ eval n
 eval (NounExpr name) = getName name
+{- @@@@
 eval (ObjectExpr _ p _ _ methods matchers) = mdo
     u <- liftIO newUnique
     let rv = undefined -- @@ UserObj u objName env methodMap matchers

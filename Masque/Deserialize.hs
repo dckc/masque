@@ -146,7 +146,7 @@ nextTag = do
                 'A' -> AssignExpr <$> getStr <*> getExpr
                 'B' -> BindingExpr <$> getStr
                 'C' -> CallExpr <$> getExpr <*> getStr <*> getExprs <*> getNamedExprs
-                'D' -> DefExpr <$> getPatt <*> getExpr <*> getExpr
+                'D' -> DefExpr <$> getPatt <*> getMaybeExpr <*> getExpr
                 'E' -> EscapeExpr <$> getPatt <*> getExpr <*> getPatt <*> getExpr
                 'F' -> FinallyExpr <$> getExpr <*> getExpr
                 'H' -> HideExpr <$> getExpr

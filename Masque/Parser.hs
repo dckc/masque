@@ -8,7 +8,7 @@ import Control.Applicative (Applicative(..), Alternative(..),
 import Data.Data
 import Text.PrettyPrint.GenericPretty (Generic, Out)
 
-import Masque.Lexer (Token(..),
+import Masque.Lexer (Token(..), Direction(..),
                      lexer, offside,
                      keywords, brackets, operators, punctuation)
 
@@ -25,6 +25,9 @@ data Expr = CharExpr Char
           | MapExpr [(Expr, Expr)]
           | RangeExpr Expr String Expr  -- String?
           | BinaryExpr Expr String Expr  -- String?
+          | CompareExpr Expr String Expr  -- String?
+          | GetExpr Expr [Expr]
+          | QuasiParserExpr (Maybe String) [Either String Expr]
           | DefExpr Patt (Maybe Expr) Expr
           | EscapeOnlyExpr Patt Expr
           | EscapeExpr Patt Expr Patt Expr
@@ -129,6 +132,10 @@ many1 p = some_p
     many_p = some_p <|> pure []
     some_p = (:) <$> p <*> many_p
 
+many0 :: Parser i a -> Parser i [a]
+many0 p = many1 p <|> pure []
+
+
 type TokenParser = Parser Token
 
 expression :: TokenParser [Expr]
@@ -169,40 +176,50 @@ blockExpr = defExpr
   <|> expr
   <|> failure -- @@ lots more
 
+pattern = finalPatt -- @@
+
+assign :: TokenParser Expr
+assign = order  -- @@
+
+prefix = prim -- @@
+
+
+-- #################################################
+
 {-
-DefExpr ::= Sequence(Sigil('def', NonTerminal('pattern')),
-         Optional(Sigil("exit", NonTerminal('order'))),
+guardOpt ::= Maybe(Sigil(':',
+ Choice(
+     0,
+     Ap('GetExpr',
+        Ap('NounExpr', 'IDENTIFIER'),
+        Brackets('[', SepBy(NonTerminal('expr'), ','), ']')),
+     Ap('NounExpr', 'IDENTIFIER'),
+     Brackets('(', NonTerminal('expr'), ')'))))
+-}
+guardOpt = optionMaybe guardOpt_1
+  where
+    guardOpt_1 = ((symbol ":") *> guardOpt_1_2)
+    guardOpt_1_2 = guardOpt_1_2_1
+      <|> guardOpt_1_2_2
+      <|> guardOpt_1_2_3
+    guardOpt_1_2_1 = GetExpr <$> guardOpt_1_2_1_1 <*> guardOpt_1_2_1_2
+    guardOpt_1_2_1_1 = NounExpr <$> parseIdentifier
+    guardOpt_1_2_1_2 = ((bra "[") *> guardOpt_1_2_1_2_2 <* (ket "]"))
+    guardOpt_1_2_1_2_2 = (sepBy expr (symbol ","))
+    guardOpt_1_2_2 = NounExpr <$> parseIdentifier
+    guardOpt_1_2_3 = ((bra "(") *> expr <* (ket ")"))
+
+{-
+DefExpr ::= Ap('DefExpr', Sigil('def', NonTerminal('pattern')),
+         Maybe(Sigil("exit", NonTerminal('order'))),
          Sigil(":=", NonTerminal('assign')))
 -}
 defExpr = DefExpr <$> defExpr_1 <*> defExpr_2 <*> defExpr_3
   where
     defExpr_1 = ((symbol "def") *> pattern)
-    defExpr_2 = defExpr_2_1
-      <|> defExpr_2_2
-    defExpr_2_1 = return Nothing
-    defExpr_2_2 = Just <$> ((symbol "exit") *> order)
+    defExpr_2 = optionMaybe defExpr_2_1
+    defExpr_2_1 = ((symbol "exit") *> order)
     defExpr_3 = ((symbol ":=") *> assign)
-
-
-pattern = finalPatt -- @@
-
-guardOpt = return Nothing
-
-{-
-FinalPatt ::= Sequence(Choice(0, "IDENTIFIER", Sigil("::", ".String.")),
-         NonTerminal('guardOpt'))
--}
-finalPatt = FinalPatt <$> finalPatt_1 <*> guardOpt
-  where
-    finalPatt_1 = parseIdentifier
-      <|> finalPatt_1_2
-    finalPatt_1_2 = ((symbol "::") *> parseString)
-
-assign :: TokenParser Expr
-assign = order  -- @@
-
-
--- #################################################
 
 {-
 order ::= Choice(0,
@@ -213,38 +230,52 @@ order ::= Choice(0,
 -}
 order = binaryExpr
   <|> rangeExpr
---  <|> compareExpr
+  <|> compareExpr
   <|> prefix
-
-prefix = prim -- @@
 
 {-
 BinaryExpr ::= Choice(0,
-  Sequence(NonTerminal('prefix'),
+  Ap('BinaryExpr', NonTerminal('prefix'),
            "**", NonTerminal('order')),
-  Sequence(NonTerminal('prefix'),
+  Ap('BinaryExpr', NonTerminal('prefix'),
            Choice(0, "*", "/", "//", "%"), NonTerminal('order')),
-  Sequence(NonTerminal('prefix'),
+  Ap('BinaryExpr', NonTerminal('prefix'),
            Choice(0, "+", "-"), NonTerminal('order')),
-  Sequence(NonTerminal('prefix'),
+  Ap('BinaryExpr', NonTerminal('prefix'),
            Choice(0, "<<", ">>"), NonTerminal('order')))
 -}
-binaryExpr = BinaryExpr <$> prefix <*> (symbol "**") <*> order
-  <|> BinaryExpr <$> prefix <*> binaryExpr_2_2 <*> order
-  <|> BinaryExpr <$> prefix <*> binaryExpr_3_2 <*> order
-  <|> BinaryExpr <$> prefix <*> binaryExpr_4_2 <*> order
+binaryExpr = binaryExpr_1
+  <|> binaryExpr_2
+  <|> binaryExpr_3
+  <|> binaryExpr_4
   where
+    binaryExpr_1 = BinaryExpr <$> prefix <*> (symbol "**") <*> order
+    binaryExpr_2 = BinaryExpr <$> prefix <*> binaryExpr_2_2 <*> order
     binaryExpr_2_2 = (symbol "*")
       <|> (symbol "/")
       <|> (symbol "//")
       <|> (symbol "%")
+    binaryExpr_3 = BinaryExpr <$> prefix <*> binaryExpr_3_2 <*> order
     binaryExpr_3_2 = (symbol "+")
       <|> (symbol "-")
+    binaryExpr_4 = BinaryExpr <$> prefix <*> binaryExpr_4_2 <*> order
     binaryExpr_4_2 = (symbol "<<")
       <|> (symbol ">>")
 
 {-
-RangeExpr ::= Sequence(NonTerminal('prefix'),
+CompareExpr ::= Ap('CompareExpr', NonTerminal('prefix'),
+         Choice(0, ">", "<", ">=", "<=", "<=>"), NonTerminal('order'))
+-}
+compareExpr = CompareExpr <$> prefix <*> compareExpr_2 <*> order
+  where
+    compareExpr_2 = (symbol ">")
+      <|> (symbol "<")
+      <|> (symbol ">=")
+      <|> (symbol "<=")
+      <|> (symbol "<=>")
+
+{-
+RangeExpr ::= Ap('RangeExpr', NonTerminal('prefix'),
          Choice(0, "..", "..!"), NonTerminal('order'))
 -}
 rangeExpr = RangeExpr <$> prefix <*> rangeExpr_2 <*> order
@@ -266,69 +297,114 @@ prim ::= Choice(
  NonTerminal('ListExpr'))
 -}
 prim = literalExpr
--- @@  <|> quasiliteral
+  <|> quasiliteral
   <|> nounExpr
   <|> prim_4
   <|> hideExpr
 -- @@  <|> mapComprehensionExpr
--- @@  <|> listComprehensionExpr
+--   <|> listComprehensionExpr
   <|> mapExpr
   <|> listExpr
   where
-    prim_4 = ((symbol "(") *> expr <* (symbol ")"))
+    prim_4 = ((bra "(") *> expr <* (ket ")"))
 
 {-
-HideExpr ::= Brackets("{", SepBy(NonTerminal('expr'), ';', fun='wrapSequence'), "}")
+HideExpr ::= Ap('HideExpr',
+   Brackets("{", SepBy(NonTerminal('expr'), ';', fun='wrapSequence'), "}"))
 -}
-hideExpr = HideExpr <$> ((symbol "{") *> hideExpr_2 <* (symbol "}"))
+hideExpr = HideExpr <$> hideExpr_1
   where
-    hideExpr_2 = (wrapSequence expr (symbol ";"))
+    hideExpr_1 = ((bra "{") *> hideExpr_1_2 <* (ket "}"))
+    hideExpr_1_2 = (wrapSequence expr (symbol ";"))
 
 {-
-NounExpr ::= Choice(0, "IDENTIFIER", Sigil("::", ".String."))
+NounExpr ::= Ap('NounExpr', Choice(0, "IDENTIFIER", Sigil("::", ".String.")))
 -}
-nounExpr = NounExpr <$> parseIdentifier
-  <|> NounExpr <$> nounExpr_2
+nounExpr = NounExpr <$> nounExpr_1
   where
-    nounExpr_2 = ((symbol "::") *> parseString)
+    nounExpr_1 = parseIdentifier
+      <|> nounExpr_1_2
+    nounExpr_1_2 = ((symbol "::") *> parseString)
 
 {-
-IntExpr ::= Sequence(Terminal(".int."))
+FinalPatt ::= Ap('FinalPatt', Choice(0, "IDENTIFIER", Sigil("::", ".String.")),
+         NonTerminal('guardOpt'))
+-}
+finalPatt = FinalPatt <$> finalPatt_1 <*> guardOpt
+  where
+    finalPatt_1 = parseIdentifier
+      <|> finalPatt_1_2
+    finalPatt_1_2 = ((symbol "::") *> parseString)
+
+{-
+quasiliteral ::= Ap('QuasiParserExpr',
+ Maybe(Terminal("IDENTIFIER")),
+ Brackets('`',
+ SepBy(
+     Choice(0,
+       Ap('Left', Terminal('QUASI_TEXT')),
+       Ap('Right',
+         Choice(0,
+           Ap('NounExpr', Terminal('DOLLAR_IDENT')),
+           Brackets('${', NonTerminal('expr'), '}'))))),
+ '`'))
+-}
+quasiliteral = QuasiParserExpr <$> quasiliteral_1 <*> quasiliteral_2
+  where
+    quasiliteral_1 = optionMaybe parseIdentifier
+    quasiliteral_2 = ((bra "`") *> quasiliteral_2_2 <* (ket "`"))
+    quasiliteral_2_2 = (many0 quasiliteral_2_2_1_1)
+    quasiliteral_2_2_1_1 = quasiliteral_2_2_1_1_1
+      <|> quasiliteral_2_2_1_1_2
+    quasiliteral_2_2_1_1_1 = Left <$> parseQuasiText
+    quasiliteral_2_2_1_1_2 = Right <$> quasiliteral_2_2_1_1_2_1
+    quasiliteral_2_2_1_1_2_1 = quasiliteral_2_2_1_1_2_1_1
+      <|> quasiliteral_2_2_1_1_2_1_2
+    quasiliteral_2_2_1_1_2_1_1 = NounExpr <$> parseDollarIdent
+    quasiliteral_2_2_1_1_2_1_2 = ((bra "${") *> expr <* (ket "}"))
+
+{-
+IntExpr ::= Ap('IntExpr', Terminal(".int."))
 -}
 intExpr = IntExpr <$> parseint
 
 {-
-DoubleExpr ::= Sequence(Terminal(".float64."))
+DoubleExpr ::= Ap('DoubleExpr', Terminal(".float64."))
 -}
 doubleExpr = DoubleExpr <$> parsefloat64
 
 {-
-CharExpr ::= Sequence(Terminal(".char."))
+CharExpr ::= Ap('CharExpr', Terminal(".char."))
 -}
-charExpr = CharExpr <$> parsechar
+charExpr = CharExpr <$> parseChar
 
 {-
-StrExpr ::= Sequence(Terminal(".String."))
+StrExpr ::= Ap('StrExpr', Terminal(".String."))
 -}
 strExpr = StrExpr <$> parseString
 
 {-
-ListExpr ::= Brackets("[", SepBy(NonTerminal('expr'), ','), "]")
+ListExpr ::= Ap('ListExpr', Brackets("[", SepBy(NonTerminal('expr'), ','), "]"))
 -}
-listExpr = ListExpr <$> ((symbol "[") *> listExpr_2 <* (symbol "]"))
+listExpr = ListExpr <$> listExpr_1
   where
-    listExpr_2 = (sepBy expr (symbol ","))
+    listExpr_1 = ((bra "[") *> listExpr_1_2 <* (ket "]"))
+    listExpr_1_2 = (sepBy expr (symbol ","))
 
 {-
-MapExpr ::= Brackets("[",
-         SepBy(Pair(NonTerminal('expr'), "=>", NonTerminal('expr')),
-               ','),
-         "]")
+MapExpr ::= Ap('MapExpr',
+  Brackets("[",
+           SepBy(Ap('pair', NonTerminal('expr'),
+                            Sigil("=>", NonTerminal('expr'))),
+                 ','),
+           "]"))
 -}
-mapExpr = MapExpr <$> ((symbol "[") *> mapExpr_2 <* (symbol "]"))
+mapExpr = MapExpr <$> mapExpr_1
   where
-    mapExpr_2 = (sepBy mapExpr_2_2_1 (symbol ","))
-    mapExpr_2_2_1 = pair <$> expr <*> ((symbol "=>") *> expr)
+    mapExpr_1 = ((bra "[") *> mapExpr_1_2 <* (ket "]"))
+    mapExpr_1_2 = (sepBy mapExpr_1_2_1_1 (symbol ","))
+    mapExpr_1_2_1_1 = pair <$> expr <*> mapExpr_1_2_1_1_2
+    mapExpr_1_2_1_1_2 = ((symbol "=>") *> expr)
 
 {-
 LiteralExpr ::= Choice(0,
@@ -344,8 +420,8 @@ literalExpr = strExpr
 -- #################################################
 
 
-parsechar :: TokenParser Char
-parsechar = item >>= \t -> case t of
+parseChar :: TokenParser Char
+parseChar = item >>= \t -> case t of
   (TokChar c) -> return $ c
   _ -> failure
 
@@ -359,6 +435,7 @@ parsefloat64 = item >>= \t -> case t of
   (TokDouble d) -> return $ d
   _ -> failure
 
+-- Isn't there a way to refactor parseString, parseIdentifier etc.?
 parseString :: TokenParser String
 parseString = item >>= \t -> case t of
   (TokString s) -> return $ s
@@ -369,6 +446,16 @@ parseIdentifier = item >>= \t -> case t of
   (TokIDENTIFIER s) -> return $ s
   _ -> failure
 
+parseDollarIdent :: TokenParser String
+parseDollarIdent = item >>= \t -> case t of
+  (TokDOLLAR_IDENT s) -> return $ s
+  _ -> failure
+
+parseQuasiText :: TokenParser String
+parseQuasiText = item >>= \t -> case t of
+  (TokQUASI_TEXT s) -> return $ s
+  _ -> failure
+
 symbol :: String -> TokenParser String
 symbol s = item >>= \t ->
   let
@@ -377,6 +464,23 @@ symbol s = item >>= \t ->
     if elem (s, t) v then return s
     else failure
 
+
+bracket :: Direction -> String -> TokenParser String
+bracket dir sym = item >>= \t ->
+  let
+    ok symtk = case symtk of
+      (_, (TokBracket _ dir')) | dir' == dir -> True
+      (_, (TokDollarBracket _ dir')) | dir' == dir -> True
+      (_, (TokAtBracket _ dir')) | dir' == dir -> True
+      _ -> False
+    v =  filter ok brackets
+  in
+    if elem (sym, t) v then return sym
+    else failure
+bra :: String -> TokenParser String
+bra = bracket Open
+ket :: String -> TokenParser String
+ket = bracket Close
 
 parseSource :: String -> [Expr]
 parseSource s = runParser expression tokens

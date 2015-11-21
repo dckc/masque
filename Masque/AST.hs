@@ -13,7 +13,7 @@ data Expr = CharExpr Char
           | AssignExpr String Expr
           | BindingExpr String
           | CallExpr Expr String [Expr] [NamedExpr]
-          | DefExpr Patt Expr Expr
+          | DefExpr Patt (Maybe Expr) Expr
           | EscapeOnlyExpr Patt Expr
           | EscapeExpr Patt Expr Patt Expr
           | FinallyExpr Expr Expr

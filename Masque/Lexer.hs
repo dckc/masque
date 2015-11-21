@@ -36,7 +36,7 @@ data Token
      | TokDouble Double
      | TokString String
 
-     | TokQUASI Direction String
+     | TokQUASI_TEXT String
 
      | TokBracket Shape Direction
      | TokDollarBracket Shape Direction
@@ -191,7 +191,7 @@ lexer kets (s1:chars) = lexSym s1 chars
     symbols = L.map fst symbolTokens
 
     lexSym :: Char -> String -> [Token]
-    lexSym '`' _ = lexer (Quasi:kets) chars
+    lexSym '`' _ = (TokBracket Quasi Open) : lexer (Quasi:kets) chars
     lexSym _ (s2:s3:cs)
       | elem (s1:s2:s3:[]) symbols = go kets (s1:s2:s3:[]) cs
     lexSym _ (s2:cs)
@@ -253,10 +253,12 @@ quasiPart kets cs = loop [] cs
         chars = maybeToList char01
 
     loop buf ('`':rest)
-      = (TokQUASI Close buf) : lexer kets rest
+      = quasiText buf ((TokBracket Quasi Close) : lexer kets rest)
 
     loop buf rest -- $ or @
-      = (TokQUASI Open buf) : lexer (Hole:Quasi:kets) rest
+      = quasiText buf (lexer (Hole:Quasi:kets) rest)
+    quasiText "" rest = rest
+    quasiText buf rest = (TokQUASI_TEXT buf) : rest
 
 
 charConstant :: String -> (Maybe Char, String)
@@ -352,8 +354,7 @@ unlex tok = ' ':(fromMaybe ".???." $ space <|> ident <|> literal <|> simple)
       (TokDouble d) -> Just $ show d
       (TokString s) | not $ elem '"' s -> Just $ "\"" ++ s ++ "\""
       (TokString s) -> Just $ "`" ++ s ++ "`"  -- TODO: finish
-      (TokQUASI Open s) -> Just $ "`" ++ s  -- TODO: stateful. :-/
-      (TokQUASI Close s) -> Just $ s ++ "`"
+      (TokQUASI_TEXT s) -> Just $ s  -- TODO: escaping.
       _ -> Nothing
     symbols = keywords ++ brackets ++ operators ++ punctuation
     simple = M.lookup tok $ encode symbols
@@ -362,8 +363,7 @@ tag :: Token -> String
 tag (TokIDENTIFIER _) = "IDENTIFIER"
 tag (TokAT_IDENT _) = "AT_IDENT"
 tag (TokDOLLAR_IDENT _) = "DOLLAR_IDENT"
-tag (TokQUASI Open _) = "QUASI_OPEN"
-tag (TokQUASI Close _) = "QUASI_CLOSE"
+tag (TokQUASI_TEXT _) = "QUASI_TEXT"
 tag (TokChar _) = ".char."
 tag (TokString _) = ".String."
 tag (TokInt _) = ".int."
@@ -412,8 +412,7 @@ literals = [
 
 quasiParts :: [(String, Token)]
 quasiParts = [
-  ("QUASI_OPEN", (TokQUASI Open "")),
-  ("QUASI_CLOSE", (TokQUASI Close ""))]
+  ("QUASI_TEXT", (TokQUASI_TEXT ""))]
 
 identifiers :: [(String, Token)]
 identifiers = [
@@ -427,9 +426,12 @@ brackets = [
   (")", TokBracket Round Close),
   ("[", TokBracket Square Open),
   ("]", TokBracket Square Close),
+  ("`", TokBracket Quasi Open),
+  ("`", TokBracket Quasi Close),
   ("${", TokDollarBracket Curly Open),
   ("@{", TokAtBracket Curly Open),
   ("{", TokBracket Curly Open),
+  ("}", TokBracket Quasi Close),
   ("}", TokBracket Curly Close)]
 
 closeBracket :: Shape -> Char
@@ -442,9 +444,9 @@ openBrackets :: Maybe Token -> (Token, [Shape])
 openBrackets (Just (TokBracket shape Open))
   = ((TokBracket shape Open), [shape])
 openBrackets (Just (TokDollarBracket shape Open))
-  = ((TokBracket shape Open), [shape])
+  = ((TokDollarBracket shape Open), [shape])
 openBrackets (Just (TokAtBracket shape Open))
-  = ((TokBracket shape Open), [shape])
+  = ((TokAtBracket shape Open), [shape])
 openBrackets (Just tok) = (tok, [])
 openBrackets _ = error "don't call openBrackets with Nothing"
 
