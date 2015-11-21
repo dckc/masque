@@ -39,6 +39,7 @@ data Vat = Vat { _unVat :: [(Obj, String, [Obj])] }
 
 data MonteState = MS { _envStack :: NonEmpty Env
                      , _vat :: Vat }
+                  deriving (Show)
 
 type Monte = EitherT Err (RWST Env () MonteState IO)
 
