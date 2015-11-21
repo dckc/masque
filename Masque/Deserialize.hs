@@ -25,6 +25,7 @@ data MASTContext = MASTContext {
   }
                  deriving Show
 
+emptyContext :: MASTContext
 emptyContext = MASTContext {
   ctxExprs = [],
   ctxMethods = [],
@@ -106,12 +107,12 @@ getNamedPatts = do
 
 nextTag :: StateT MASTContext Get ()
 nextTag = do
-    tag <- lift getWord8
-    case (toEnum . fromEnum) tag of
+    tag <- toChar <$> lift getWord8
+    case tag of
         -- Literals
         'L' -> do
-            literalTag <- lift getWord8
-            expr <- case (toEnum . fromEnum) literalTag of
+            literalTag <- toChar <$> lift getWord8
+            expr <- case literalTag of
                 -- 'C' -> do ...
                 'D' -> DoubleExpr <$> getDouble
                 'I' -> do
@@ -119,17 +120,19 @@ nextTag = do
                     return $ IntExpr $ zzd i
                 'N' -> return $ SequenceExpr [] -- "NullExpr" @@
                 'S' -> StrExpr <$> getStr
+                _ -> error "bad literal tag @@todo: show tag"
             modify (\ctx -> ctx { ctxExprs = (ctxExprs ctx) ++ [expr] })
         -- Patts
         'P' -> do
-            pattTag <- lift getWord8
-            patt <- case (toEnum . fromEnum) pattTag of
+            pattTag <- toChar <$> lift getWord8
+            patt <- case pattTag of
                 'A' -> ViaPatt <$> getExpr <*> getPatt
                 'B' -> BindPatt <$> getStr
                 'F' -> FinalPatt <$> getStr <*> getMaybeExpr
                 'I' -> IgnorePatt <$> getMaybeExpr
                 'L' -> ListPatt <$> getPatts
                 'V' -> VarPatt <$> getStr <*> getMaybeExpr
+                _ -> error "bad pattern tag @@todo: show tag"
             modify (\ctx -> ctx { ctxPatts = (ctxPatts ctx) ++ [patt]})
         'M' -> do
             method <- Method <$> getStr <*> getStr <*> getPatts <*> getNamedPatts <*> getExpr <*> getExpr
@@ -138,8 +141,8 @@ nextTag = do
             matcher <- Matcher <$> getPatt <*> getExpr
             modify (\ctx -> ctx { ctxMatchers = (ctxMatchers ctx) ++ [matcher]})
         -- Exprs
-        tag -> do
-            expr <- case tag of
+        tag' -> do
+            expr <- case tag' of
                 'A' -> AssignExpr <$> getStr <*> getExpr
                 'B' -> BindingExpr <$> getStr
                 'C' -> CallExpr <$> getExpr <*> getStr <*> getExprs <*> getNamedExprs
@@ -153,4 +156,7 @@ nextTag = do
                 'S' -> SequenceExpr <$> getExprs
                 'Y' -> TryExpr <$> getExpr <*> getPatt <*> getExpr
                 'e' -> EscapeOnlyExpr <$> getPatt <*> getExpr
+                _ -> error "bad expr tag @@todo: show tag"
             modify (\ctx -> ctx { ctxExprs = (ctxExprs ctx) ++ [expr] })
+    where
+      toChar = toEnum . fromEnum
