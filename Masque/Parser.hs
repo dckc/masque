@@ -21,13 +21,17 @@ data Expr = CharExpr Char
           | ExitExpr String (Maybe Expr) -- String? only 3 possibilities
           | AssignExpr String Expr
           | BindingExpr String
-          | CallExpr Expr String [Expr] [NamedExpr]
+          | MethodCallExpr Expr String [Expr] -- [NamedExpr]
+          | SendExpr Expr String [Expr] -- [NamedExpr]
+          | FunCallExpr Expr [Expr] -- [NamedExpr]
+          | FunSendExpr Expr [Expr] -- [NamedExpr]
+          | GetExpr Expr [Expr]
+          | CurryExpr Expr Bool String
           | ListExpr [Expr]
           | MapExpr [(Expr, Expr)]
           | RangeExpr Expr String Expr  -- String?
           | BinaryExpr Expr String Expr  -- String?
           | CompareExpr Expr String Expr  -- String?
-          | GetExpr Expr [Expr]
           | QuasiParserExpr (Maybe String) [Either String Expr]
           | DefExpr Patt (Maybe Expr) Expr
           | EscapeOnlyExpr Patt Expr
@@ -166,7 +170,39 @@ wrapSequence p sep = do
 pair :: a -> b -> (a, b)
 pair a b = (a, b)
 
+isArrow :: String -> Bool
+isArrow s = s == "->"
 
+type Message = (Maybe String, [Expr]) -- TODO: namedexpr
+type CallOrSend = Either Message Message
+type CallSendIndex = Either [Expr] CallOrSend
+type Curry = Either String String
+callExpr :: Expr ->
+            [CallSendIndex] ->
+            (Maybe Curry) -> Expr
+callExpr rx ts c = maybeCurry c (trailers rx ts)
+  where
+    trailers :: Expr -> [CallSendIndex] -> Expr
+    trailers rx' [] = rx'
+
+    trailers rx' ((Right (Right ((Just verb), args))):ts') =
+      trailers (MethodCallExpr rx' verb args) ts'
+    trailers rx' ((Right (Right (Nothing, args))):ts') =
+      trailers (FunCallExpr rx' args) ts'
+
+    trailers rx' ((Right (Left ((Just verb), args))):ts') =
+      trailers (SendExpr rx' verb args) ts'
+    trailers rx' ((Right (Left (Nothing, args))):ts') =
+      trailers (FunSendExpr rx' args) ts'
+
+    trailers rx' ((Left args):ts') =
+      trailers (GetExpr rx' args) ts'
+
+    maybeCurry :: (Maybe (Either String String)) -> Expr -> Expr
+    maybeCurry (Just (Right verb)) rx' = CurryExpr rx' True verb
+    maybeCurry (Just (Left verb)) rx' = CurryExpr rx' False verb
+    maybeCurry Nothing rx' = rx'
+    
 expr :: TokenParser Expr
 expr =
       assign
@@ -182,8 +218,10 @@ pattern = finalPatt -- @@
 assign :: TokenParser Expr
 assign = order  -- @@
 
-prefix = prim -- @@
+prefix = calls -- @@
 
+mapComprehensionExpr = failure -- @@
+listComprehensionExpr = failure -- @@
 
 -- #################################################
 
@@ -221,6 +259,80 @@ defExpr = DefExpr <$> defExpr_1 <*> defExpr_2 <*> defExpr_3
     defExpr_2 = optionMaybe defExpr_2_1
     defExpr_2_1 = ((symbol "exit") *> order)
     defExpr_3 = ((symbol ":=") *> assign)
+
+{-
+calls ::= Ap('callExpr',
+    NonTerminal('prim'),
+    SepBy(
+      Choice(0,
+        Ap('Right',
+          Choice(0,
+            Ap('Right', NonTerminal('call')),
+            Ap('Left', NonTerminal('send')))),
+        Ap('Left', NonTerminal('index')))),
+    Maybe(NonTerminal('curryTail')))
+-}
+calls = callExpr <$> prim <*> calls_2 <*> calls_3
+  where
+    calls_2 = (many0 calls_2_1_1)
+    calls_2_1_1 = calls_2_1_1_1
+      <|> calls_2_1_1_2
+    calls_2_1_1_1 = Right <$> calls_2_1_1_1_1
+    calls_2_1_1_1_1 = calls_2_1_1_1_1_1
+      <|> calls_2_1_1_1_1_2
+    calls_2_1_1_1_1_1 = Right <$> call
+    calls_2_1_1_1_1_2 = Left <$> send
+    calls_2_1_1_2 = Left <$> index
+    calls_3 = optionMaybe curryTail
+
+{-
+call ::= Ap('pair', Maybe(Sigil(".", NonTerminal('verb'))), NonTerminal('argList'))
+-}
+call = pair <$> call_1 <*> argList
+  where
+    call_1 = optionMaybe call_1_1
+    call_1_1 = ((symbol ".") *> verb)
+
+{-
+send ::= Sigil("<-", Ap('pair', Maybe(NonTerminal('verb')), NonTerminal('argList')))
+-}
+send = ((symbol "<-") *> send_2)
+  where
+    send_2 = pair <$> send_2_1 <*> argList
+    send_2_1 = optionMaybe verb
+
+{-
+curryTail ::= Choice(0,
+  Ap('Right', Sigil(".", NonTerminal('verb'))),
+  Ap('Left', Sigil("<-", NonTerminal('verb'))))
+-}
+curryTail = curryTail_1
+  <|> curryTail_2
+  where
+    curryTail_1 = Right <$> curryTail_1_1
+    curryTail_1_1 = ((symbol ".") *> verb)
+    curryTail_2 = Left <$> curryTail_2_1
+    curryTail_2_1 = ((symbol "<-") *> verb)
+
+{-
+index ::= Brackets("[", SepBy(NonTerminal('expr'), ','), "]")
+-}
+index = ((bra "[") *> index_2 <* (ket "]"))
+  where
+    index_2 = (sepBy expr (symbol ","))
+
+{-
+verb ::= Choice(0, "IDENTIFIER", ".String.")
+-}
+verb = parseIdentifier
+  <|> parseString
+
+{-
+argList ::= Brackets("(", SepBy(NonTerminal('expr'), ","), ")")
+-}
+argList = ((bra "(") *> argList_2 <* (ket ")"))
+  where
+    argList_2 = (sepBy expr (symbol ","))
 
 {-
 order ::= Choice(0,
@@ -302,8 +414,8 @@ prim = literalExpr
   <|> nounExpr
   <|> prim_4
   <|> hideExpr
--- @@  <|> mapComprehensionExpr
---   <|> listComprehensionExpr
+  <|> mapComprehensionExpr
+  <|> listComprehensionExpr
   <|> mapExpr
   <|> listExpr
   where
