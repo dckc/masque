@@ -3,7 +3,7 @@
 
 module Masque.AST where
 
-import Text.PrettyPrint.GenericPretty (Generic, Out, pp)
+import Text.PrettyPrint.GenericPretty (Generic, Out)
 import Data.Data
 
 data Expr = CharExpr Char
