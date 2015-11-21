@@ -152,7 +152,7 @@ wrapSequence p sep = do
   exprs <- sepBy p sep
   return $ case exprs of
     [] -> SequenceExpr []
-    [expr] -> expr
+    [e] -> e
     _ -> SequenceExpr exprs
 
 pair :: a -> b -> (a, b)
