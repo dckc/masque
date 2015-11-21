@@ -434,6 +434,16 @@ brackets = [
   ("}", TokBracket Quasi Close),
   ("}", TokBracket Curly Close)]
 
+bracketsDir :: Direction -> [(String, Token)]
+bracketsDir dir = L.filter rightSide brackets
+  where
+    rightSide symtk = case symtk of
+      (_, (TokBracket _ dir')) | dir' == dir -> True
+      (_, (TokDollarBracket _ dir')) | dir' == dir -> True
+      (_, (TokAtBracket _ dir')) | dir' == dir -> True
+      _ -> False
+
+
 closeBracket :: Shape -> Char
 closeBracket Curly = '}'
 closeBracket Square = ']'

@@ -10,6 +10,7 @@ import Text.PrettyPrint.GenericPretty (Generic, Out)
 
 import Masque.Lexer (Token(..), Direction(..),
                      lexer, offside,
+                     bracketsDir,
                      keywords, brackets, operators, punctuation)
 
 
@@ -467,16 +468,8 @@ symbol s = item >>= \t ->
 
 bracket :: Direction -> String -> TokenParser String
 bracket dir sym = item >>= \t ->
-  let
-    ok symtk = case symtk of
-      (_, (TokBracket _ dir')) | dir' == dir -> True
-      (_, (TokDollarBracket _ dir')) | dir' == dir -> True
-      (_, (TokAtBracket _ dir')) | dir' == dir -> True
-      _ -> False
-    v =  filter ok brackets
-  in
-    if elem (sym, t) v then return sym
-    else failure
+  if elem (sym, t) (bracketsDir dir) then return sym
+  else failure
 bra :: String -> TokenParser String
 bra = bracket Open
 ket :: String -> TokenParser String
