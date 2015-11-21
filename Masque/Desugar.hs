@@ -31,6 +31,23 @@ desugar = modPow . kExpr -- @@ . ifAnd . ifOr
         toVerb = M.fromList pairs
         verb = fromJust $ M.lookup op toVerb
 
+    kExpr (S.MethodCallExpr rx verb args) =
+      (K.CallExpr (kExpr rx) verb (map kExpr args) [])
+
+    kExpr (S.FunCallExpr rx args) =
+      (K.CallExpr (kExpr rx) "run" (map kExpr args) [])
+
+    kExpr (S.SendExpr rx verb args) =
+      (K.CallExpr (K.NounExpr "M") "send" msg [])
+      where
+        msg = [kExpr rx, K.StrExpr verb, args', nargs']
+        args' = kExpr $ S.ListExpr args
+        nargs' = kExpr $ S.MapExpr nargs
+        nargs = [] -- TODO
+
+    kExpr (S.GetExpr rx args) =
+      (K.CallExpr (kExpr rx) "get" (map kExpr args) [])
+
     kExpr (S.DefExpr patt ex assign) =
       -- TODO: there's more to this.
       (K.DefExpr (kPatt patt) (fmap kExpr ex) (kExpr assign))
