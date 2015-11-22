@@ -18,7 +18,7 @@ data Expr = CharExpr Char
           | EscapeExpr Patt Expr Patt Expr
           | FinallyExpr Expr Expr
           | HideExpr Expr
-          | IfExpr Expr Expr Expr
+          | IfExpr Expr Expr (Maybe Expr)
           | NounExpr String
           | ObjectExpr String Patt Expr [Expr] [Method] [Matcher]
           | SequenceExpr [Expr]
