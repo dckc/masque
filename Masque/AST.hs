@@ -35,7 +35,7 @@ data NamedExpr = NamedExpr Expr Expr
     deriving (Eq, Show, Read, Data, Typeable, Generic)
 
 data Patt = IgnorePatt (Maybe Expr)
-          | BindPatt String
+          | BindingPatt String
           | FinalPatt String (Maybe Expr)
           | ListPatt [Patt]
           | VarPatt String (Maybe Expr)

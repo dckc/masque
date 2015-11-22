@@ -61,7 +61,10 @@ eval (FinallyExpr node atLast) = bracketEitherT before after return
 eval (IfExpr i t f) = do
     test <- eval i
     BoolObj b <- resolve test
-    scoped $ eval $ if b then t else f
+    if b then scoped $ eval t
+      else case f of
+      (Just f') -> scoped $ eval $ f'
+      Nothing -> return NullObj
 eval (HideExpr n) = scoped $ eval n
 eval (NounExpr name) = getName name
 {- @@@@
@@ -133,7 +136,7 @@ resolve :: Obj -> Monte Obj
 resolve obj = return obj
 
 unifyEject :: Obj -> Obj -> Patt -> Monte ()
-unifyEject _  _ (BindPatt _) = undefined
+unifyEject _  _ (BindingPatt _) = undefined
 unifyEject obj _ (FinalPatt n Nothing) = defBinding n obj
 unifyEject obj ej (FinalPatt n (Just g)) = do
     g' <- eval g
@@ -155,7 +158,7 @@ unifyEject obj ej (ViaPatt expr p) = do
     unifyEject examined ej p
 
 unify :: Obj -> Patt -> Monte Bool
-unify _  (BindPatt _) = undefined
+unify _  (BindingPatt _) = undefined
 unify obj (FinalPatt n Nothing) = defBinding n obj >> return True
 unify obj (FinalPatt n (Just g)) = do
     g' <- eval g

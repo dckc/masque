@@ -127,7 +127,7 @@ nextTag = do
             pattTag <- toChar <$> lift getWord8
             patt <- case pattTag of
                 'A' -> ViaPatt <$> getExpr <*> getPatt
-                'B' -> BindPatt <$> getStr
+                'B' -> BindingPatt <$> getStr
                 'F' -> FinalPatt <$> getStr <*> getMaybeExpr
                 'I' -> IgnorePatt <$> getMaybeExpr
                 'L' -> ListPatt <$> getPatts
@@ -150,7 +150,7 @@ nextTag = do
                 'E' -> EscapeExpr <$> getPatt <*> getExpr <*> getPatt <*> getExpr
                 'F' -> FinallyExpr <$> getExpr <*> getExpr
                 'H' -> HideExpr <$> getExpr
-                'I' -> IfExpr <$> getExpr <*> getExpr <*> getExpr
+                'I' -> IfExpr <$> getExpr <*> getExpr <*> getMaybeExpr
                 'N' -> NounExpr <$> getStr
                 'O' -> ObjectExpr <$> getStr <*> getPatt <*> getExpr <*> getExprs <*> (getNodes ctxMethods) <*> (getNodes ctxMatchers)
                 'S' -> SequenceExpr <$> getExprs

@@ -3,8 +3,8 @@ module Masque.Desugar where
 import Data.Maybe (fromJust)
 import qualified Data.Map as M
 
-import qualified Masque.Parser as S  -- with sugar
-import qualified Masque.AST as K     -- kernel
+import qualified Masque.FullSyntax as S  -- with sugar
+import qualified Masque.AST as K         -- kernel
 import qualified Masque.Lexer as L
 
 desugar :: S.Expr -> K.Expr
@@ -57,7 +57,7 @@ desugar = modPow . kExpr -- @@ . ifAnd . ifOr
     kPatt :: S.Patt -> K.Patt
     kPatt (S.FinalPatt s g) = (K.FinalPatt s (fmap kExpr g))
     kPatt (S.IgnorePatt g) = (K.IgnorePatt (fmap kExpr g))
-    kPatt (S.BindPatt s) = (K.BindPatt s)
-    kPatt (S.ListPatt ps) = (K.ListPatt (map kPatt ps))
+    kPatt (S.BindingPatt s) = (K.BindingPatt s)
     kPatt (S.VarPatt s g) = (K.VarPatt s (fmap kExpr g))
     kPatt (S.ViaPatt ex p) = (K.ViaPatt (kExpr ex) (kPatt p))
+    -- kPatt (S.ListPatt ps) = (K.ListPatt (map kPatt ps))
