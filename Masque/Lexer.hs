@@ -53,9 +53,9 @@ data Token
      | TokPow
      | TokAnd | TokOr
 
-     | TokComplement
+     | TokComplement | TokNot
      | TokRangeIncl | TokRangeExcl
-     | TokAsBigAs | TokLEq | TokGEq | TokEq | TokNotEq
+     | TokAsBigAs | TokLT | TokGT | TokLEq | TokGEq | TokEq | TokNotEq
      | TokMatchBind | TokNotMatchBind
      | TokLogicalAnd | TokLogicalOr | TokButNot
                                        
@@ -154,7 +154,7 @@ lexer kets (c:cs) | idStart c = lexId (c:cs)
         | elem check ['=', '>', '~']
           -> (TokIDENTIFIER word) : lexer kets ('=':check:rest)
       (Right word, '=':rest)
-        -> (TokVERB_ASSIGN $ word ++ ['=']) : lexer kets rest
+        -> (TokVERB_ASSIGN $ word) : lexer kets rest
       (Right word, rest)
         -> (TokIDENTIFIER word) : lexer kets rest
 
@@ -334,11 +334,11 @@ numLit kets cs = lexNum cs
 
 
 unlex :: Token -> String
-unlex tok = ' ':(fromMaybe ".???." $ space <|> ident <|> literal <|> simple)
+unlex tok = fromMaybe ".???." $ space <|> ident <|> literal <|> simple
   where
     space = case tok of
-      (TokBracket Curly Open) -> Just $ "{\n"
-      (TokBracket Curly Close) -> Just $ "\n}\n"
+      (TokBracket Curly Open) -> Just $ "{ "
+      (TokBracket Curly Close) -> Just $ "} "
       (TokNewLine qty) -> Just $ "\n" ++ (replicate qty ' ')
       (TokComment s) -> Just $ "#" ++ s
       _ -> Nothing
@@ -432,7 +432,6 @@ brackets = [
   ("${", TokDollarBracket Curly Open),
   ("@{", TokAtBracket Curly Open),
   ("{", TokBracket Curly Open),
-  ("}", TokBracket Quasi Close),
   ("}", TokBracket Curly Close)]
 
 bracketsDir :: Direction -> [(String, Token)]
@@ -484,12 +483,15 @@ operators = [
   ("..!", TokRangeExcl),
   (":=", TokAssign),
   ("<=>", TokAsBigAs),
+  ("<", TokLT),
+  (">", TokLT),
   ("<=", TokLEq),
   (">=", TokGEq),
   ("==", TokEq),
   ("!=", TokNotEq),
   ("=~", TokMatchBind),
   ("!~", TokNotMatchBind),
+  ("!", TokNot),
   ("&&", TokLogicalAnd),
   ("||", TokLogicalOr),
   ("&!", TokButNot)
