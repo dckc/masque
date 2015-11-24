@@ -322,7 +322,7 @@ numLit kets cs = lexNum cs
           ((Just (dot_frac, _)), (Just (sign_expn, rest))) ->
             Just $ (TokDouble $ read numeral) : lexer kets rest
             where
-              numeral = whole ++ dot_frac ++ sign_expn
+              numeral = whole ++ dot_frac ++ "e" ++ sign_expn
           ((Just (dot_frac, rest)), Nothing) ->
             Just $ (TokDouble $ read numeral) : lexer kets rest
             where
