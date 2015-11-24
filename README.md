@@ -14,4 +14,11 @@ To build and run:
     $ dist/build/masque/masque someMonte.ty
 ```
 
+To test
+
+(TODO: document cabal sandbox init etc.)
+```
+    $ cabal exec runhaskell Test.hs
+```
+
 Patches are welcome. This is a GPLv3 project.

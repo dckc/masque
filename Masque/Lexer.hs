@@ -75,11 +75,11 @@ data Shape
      | Curly   -- { }
      | Quasi   -- ` `
      | Hole    -- ${ }, @{ } $id, @id
-     deriving (Show, Eq, Ord)
+     deriving (Show, Eq, Ord, Enum, Bounded)
 
 data Direction
      = Open | Close
-     deriving (Show, Eq, Ord)
+     deriving (Show, Eq, Ord, Enum, Bounded)
 
 
 offside :: [Token] -> [Token]
@@ -339,25 +339,26 @@ unlex tok = ' ':(fromMaybe ".???." $ space <|> ident <|> literal <|> simple)
     space = case tok of
       (TokBracket Curly Open) -> Just $ "{\n"
       (TokBracket Curly Close) -> Just $ "\n}\n"
-      (TokNewLine qty) -> Just $ ";\n" ++ (replicate qty ' ')
+      (TokNewLine qty) -> Just $ "\n" ++ (replicate qty ' ')
+      (TokComment s) -> Just $ "#" ++ s
       _ -> Nothing
     ident = case tok of
-      (TokIDENTIFIER i)   -> Just i
-      (TokDOLLAR_IDENT i) -> Just $ "$" ++ i
-      (TokAT_IDENT i)     -> Just $ "@" ++ i
-      (TokVERB_ASSIGN v)  -> Just $ v ++ "="
+      (TokIDENTIFIER i)   -> Just $ i ++ " "
+      (TokDOLLAR_IDENT i) -> Just $ "$" ++ i ++ " "
+      (TokAT_IDENT i)     -> Just $ "@" ++ i ++ " "
+      (TokVERB_ASSIGN v)  -> Just $ v ++ "= "
       _ -> Nothing
     literal = case tok of
-      (TokChar '\'') -> Just "'\\''"
-      (TokChar c) -> Just $ "'" ++ [c] ++ "'"
-      (TokInt i) -> Just $ show i
-      (TokDouble d) -> Just $ show d
-      (TokString s) | not $ elem '"' s -> Just $ "\"" ++ s ++ "\""
-      (TokString s) -> Just $ "`" ++ s ++ "`"  -- TODO: finish
+      (TokChar '\'') -> Just "'\\'' "
+      (TokChar c) -> Just $ "'" ++ [c] ++ "' "
+      (TokInt i) -> Just $ (show i) ++ " "
+      (TokDouble d) -> Just $ (show d) ++ " "
+      (TokString s) | not $ elem '"' s -> Just $ "\"" ++ s ++ "\" "
+      (TokString s) -> Just $ "`" ++ s ++ "` "  -- TODO: finish
       (TokQUASI_TEXT s) -> Just $ s  -- TODO: escaping.
       _ -> Nothing
     symbols = keywords ++ brackets ++ operators ++ punctuation
-    simple = M.lookup tok $ encode symbols
+    simple = fmap (\s -> s ++ " ") (M.lookup tok $ encode symbols)
 
 tag :: Token -> String
 tag (TokIDENTIFIER _) = "IDENTIFIER"
