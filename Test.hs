@@ -17,7 +17,7 @@ module Test where
 
 import Control.Monad
 import Control.Applicative ((<$>), (<*>))
-import Data.Char (isPrint)
+import Data.Char (isPrint, isUpper, isLower, isDigit)
 import Test.QuickCheck
 
 import Masque.Monte (Obj(..))
@@ -36,84 +36,100 @@ instance Arbitrary Obj where
             i <- choose (-5, 5)
             return $ IntObj i
 
-propSameEverIdentical x = sameEver x x
 
-newtype BalancedTokens = BalancedTokens [Token]
-                       deriving (Show)
-unTokens :: BalancedTokens -> [Token]
-unTokens (BalancedTokens toks) = toks
-
-instance Arbitrary BalancedTokens where
-  arbitrary = BalancedTokens <$> (sized rest)
+balancedTokens :: Gen [Token]
+balancedTokens = sized step where
+  step :: Int -> Gen [Token]
+  step 0 = return []
+  step n
+    | n > 0 = frequency [(10, left), (10, right), (2, wrap), (1, comment)]
     where
-      rest :: Int -> Gen [Token]
-      rest 0 = return []
-      rest n | (n `mod` 11) == 0 = wrap $ rest (n - 1)
-      rest n | (n `mod` 23) == 0 = mkComment -- always followed by newline
-      rest n = (:) <$> token <*> (rest (n - 1))
+      left = do
+        ts <- step (n - 1)
+        t <- nonBracket
+        return $ t:ts
+      right = do
+        ts <- step (n - 1)
+        t <- nonBracket
+        return $ ts ++ [t]
+      wrap = do
+        ts <- step (n - 1)
+        bra <- openBracket
+        let ket = closeFor bra
+        return $ [bra] ++ ts ++ [ket]
+      comment = do
+        ts <- step (n - 1)
+        com <- genComment
+        return $ com ++ ts
 
-      wrap :: Gen [Token] -> Gen [Token]
-      wrap toks = do
-        sort <- elements [TokBracket Round,
-                          TokBracket Square,
-                          -- TokDollarBracket Curly -- TODO
-                          -- TokAtBracket Curly
-                          -- TokBracket Quasi,
-                          TokBracket Curly]
-        toks' <- toks
-        return ([(sort Open)] ++ toks' ++ [(sort Close)])
-
-      mkComment :: Gen [Token]
-      mkComment = do
-        com <- listOf (suchThat arbitrary isPrint) :: Gen String
-        indent <- liftM getPositive arbitrary :: Gen Int
-        return [TokComment com, TokNewLine indent]
-
-      genid :: Gen String
-      genid = (:) <$> (suchThat arbitrary idStart) <*> (listOf (suchThat arbitrary idPart))
-
-      noEscapes :: Gen String
-      noEscapes = suchThat arbitrary (\s ->
-                                 (not ('"' `elem` s)
-                                  || ('\\' `elem` s)
-                                  || ('@' `elem` s)
-                                  || ('$' `elem` s)
-                                  || ('`' `elem` s)))
-
-      token = oneof (
+nonBracket :: Gen Token
+nonBracket = oneof (
         [return t |
          (_, t) <- (keywords ++ operators ++ punctuation)]
+        ++
+        [ctor <$> genid |
+         ctor <- [TokIDENTIFIER, TokDOLLAR_IDENT, TokAT_IDENT, TokVERB_ASSIGN]]
         ++ [
-          liftM TokIDENTIFIER genid
-        , liftM TokDOLLAR_IDENT genid
-        , liftM TokAT_IDENT genid
-          
-        , liftM TokChar arbitrary
+          liftM TokChar arbitrary
         , liftM TokInt $ liftM getPositive arbitrary
         , liftM TokDouble $ liftM getPositive arbitrary
           -- TODO: string quoting stuff
         , liftM TokString noEscapes
-          
           -- TODO     , liftM TokQUASI_TEXT arbitrary
-          
-        , TokVERB_ASSIGN <$> genid
-          
         , liftM TokNewLine $ liftM getPositive arbitrary
         ])
+  where
+    genid :: Gen String
+    genid =
+      (:) <$> (suchThat arbitrary idStart) <*> (listOf (suchThat arbitrary idPart))
+    noEscapes :: Gen String
+    noEscapes = listOf (suchThat arbitrary
+                        (\c -> (isPrint c) &&
+                               (not (elem c "\"\\@$`"))))
 
-instance Arbitrary Shape where
-  arbitrary = elements $ enumFromTo minBound maxBound
+openBracket :: Gen Token
+openBracket = elements [TokBracket Round Open,
+                        TokBracket Square Open,
+                        TokDollarBracket Curly Open,
+                        TokAtBracket Curly Open,
+                        -- TODO TokBracket Quasi Open,
+                        TokBracket Curly Open]
 
-instance Arbitrary Direction where
-  arbitrary = elements $ enumFromTo minBound maxBound
+closeFor :: Token -> Token
+closeFor (TokBracket shape Open) = (TokBracket shape Close)
+closeFor (TokDollarBracket shape Open) = (TokBracket shape Close)
+closeFor (TokAtBracket shape Open) = (TokBracket shape Close)
+closeFor _ = (TokBracket Curly Close)
 
-propLexInverseUnlex :: BalancedTokens -> Bool
-propLexInverseUnlex btoks =
-  lexer [] (concatMap unlex (unTokens btoks)) == (unTokens btoks)
+genComment :: Gen [Token]
+genComment = do
+  csize <- choose (0, 120)
+  text <- vectorOf csize (frequency [
+                             (10, (suchThat arbitrary isUpper)),
+                             (10, (suchThat arbitrary isDigit)),
+                             (60, (suchThat arbitrary isLower)),
+                             (15, return ' '),
+                             (5, (suchThat arbitrary isPrint))])
+  indent <- choose (0, 120)
+  return [TokComment text, TokNewLine indent]
 
+propSameEverIdentical x = sameEver x x
+
+prop_lexUnlex1 = forAll nonBracket $ \t ->
+  lexer [] (unlex t) == [t]
+
+prop_lexUnlex = forAll balancedTokens $ \ts ->
+  lexer [] (concatMap unlex ts) == ts
+
+prop_lexDouble = forAll (liftM getPositive arbitrary) $ \x ->
+  (lexer [] (unlex $ TokDouble x)) == [TokDouble x]
 
 main = do
+    print "lexDouble..."
+    quickCheck prop_lexDouble
+    print "lexUnlex1..."
+    quickCheck prop_lexUnlex1
     print "propLexInverseUnlex..."
-    verboseCheck propLexInverseUnlex
+    verboseCheck prop_lexUnlex
     print "sameEver..."
     quickCheck propSameEverIdentical
