@@ -1,4 +1,3 @@
-{-# LANGUAGE FlexibleInstances #-}
 -- Copyright (C) 2014 Google Inc. All rights reserved.
 --
 -- Licensed under the Apache License, Version 2.0 (the "License"); you may not
@@ -18,12 +17,14 @@ module Test where
 
 import Control.Monad
 import Control.Applicative ((<$>), (<*>))
+import Data.Char (isPrint)
 import Test.QuickCheck
 
 import Masque.Monte (Obj(..))
 import Masque.Objects (sameEver)
 import Masque.Lexer (Token(..), Shape(..), Direction(..),
-                     lexer, unlex, idStart, idPart)
+                     lexer, unlex, idStart, idPart,
+                     keywords, operators, punctuation)
 
 
 instance Arbitrary Obj where
@@ -47,80 +48,58 @@ instance Arbitrary BalancedTokens where
     where
       rest :: Int -> Gen [Token]
       rest 0 = return []
-      rest n | (n `mod` 10) == 0 = brackets $ rest (n - 1)
-      rest n | (n `mod` 13) == 0 = mkComment
+      rest n | (n `mod` 11) == 0 = wrap $ rest (n - 1)
+      rest n | (n `mod` 23) == 0 = mkComment -- always followed by newline
       rest n = (:) <$> token <*> (rest (n - 1))
-      brackets :: Gen [Token] -> Gen [Token]
-      brackets toks = (++) <$> bra <*> ((++) <$> toks <*> ket) where
-        s :: Gen Shape
-        s = arbitrary
-        sort :: Gen (Shape -> Direction -> Token)
-        sort = elements [TokBracket, TokDollarBracket, TokAtBracket]
-        bra = do { s' <- s; sort' <- sort; return [(sort' s' Open)]}
-        ket = do { s' <- s; sort' <- sort; return [(sort' s' Close)]}
+
+      wrap :: Gen [Token] -> Gen [Token]
+      wrap toks = do
+        sort <- elements [TokBracket Round,
+                          TokBracket Square,
+                          -- TokDollarBracket Curly -- TODO
+                          -- TokAtBracket Curly
+                          -- TokBracket Quasi,
+                          TokBracket Curly]
+        toks' <- toks
+        return ([(sort Open)] ++ toks' ++ [(sort Close)])
 
       mkComment :: Gen [Token]
-      mkComment = (++) <$> (listOf1 com) <*> (listOf1 nl) where
-        com = TokComment <$> listOf (suchThat (return 'C') (\c -> (c > '\n')))
-        nl = TokNewLine <$> arbitrary
+      mkComment = do
+        com <- listOf (suchThat arbitrary isPrint) :: Gen String
+        indent <- liftM getPositive arbitrary :: Gen Int
+        return [TokComment com, TokNewLine indent]
 
       genid :: Gen String
-      genid = (:) <$> (suchThat (return 'i') idStart) <*> (listOf (suchThat (return 'd') idPart))
+      genid = (:) <$> (suchThat arbitrary idStart) <*> (listOf (suchThat arbitrary idPart))
 
-      token = oneof [
-          return KW_as
-        , return KW_bind , return KW_break
-        , return KW_catch , return KW_continue
-        , return KW_def
-        , return KW_else , return KW_escape , return KW_exit , return KW_extends , return KW_exports
-        , return KW_finally , return KW_fn , return KW_for
-        , return KW_guards
-        , return KW_if , return KW_implements , return KW_imports , return KW_in , return KW_interface
-        , return KW_match , return KW_meta , return KW_method
-        , return KW_object
-        , return KW_pass , return KW_pragma
-        , return KW_return
-        , return KW_switch
-        , return KW_to , return KW_try
-        , return KW_var , return KW_via
-        , return KW_when , return KW_while
-                           
-        , liftM TokIDENTIFIER genid
+      noEscapes :: Gen String
+      noEscapes = suchThat arbitrary (\s ->
+                                 (not ('"' `elem` s)
+                                  || ('\\' `elem` s)
+                                  || ('@' `elem` s)
+                                  || ('$' `elem` s)
+                                  || ('`' `elem` s)))
+
+      token = oneof (
+        [return t |
+         (_, t) <- (keywords ++ operators ++ punctuation)]
+        ++ [
+          liftM TokIDENTIFIER genid
         , liftM TokDOLLAR_IDENT genid
         , liftM TokAT_IDENT genid
           
         , liftM TokChar arbitrary
-        , liftM TokInt arbitrary
-        , liftM TokDouble arbitrary
-        , liftM TokString arbitrary
+        , liftM TokInt $ liftM getPositive arbitrary
+        , liftM TokDouble $ liftM getPositive arbitrary
+          -- TODO: string quoting stuff
+        , liftM TokString noEscapes
           
           -- TODO     , liftM TokQUASI_TEXT arbitrary
           
-        , return TokAssign
-        , liftM TokVERB_ASSIGN genid
+        , TokVERB_ASSIGN <$> genid
           
-        , return TokAdd , return TokSubtract
-        , return TokShiftLeft , return TokShiftRight
-        , return TokXor
-        , return TokMod
-        , return TokMultiply , return TokFloorDivide , return TokApproxDivide
-        , return TokPow
-        , return TokAnd , return TokOr
-                          
-        , return TokComplement
-        , return TokRangeIncl , return TokRangeExcl
-        , return TokAsBigAs , return TokLEq , return TokGEq , return TokEq , return TokNotEq
-        , return TokMatchBind , return TokNotMatchBind
-        , return TokLogicalAnd , return TokLogicalOr , return TokButNot
-                                                       
-        , return TokSemi , return TokComma , return TokColon
-        , return TokStringNoun
-        , return TokSuchThat , return TokIgnore
-        , return TokCall , return TokSend
-        , return TokArrow , return TokFatArrow
-                            
-        , liftM TokNewLine arbitrary
-        ]
+        , liftM TokNewLine $ liftM getPositive arbitrary
+        ])
 
 instance Arbitrary Shape where
   arbitrary = elements $ enumFromTo minBound maxBound
@@ -129,11 +108,12 @@ instance Arbitrary Direction where
   arbitrary = elements $ enumFromTo minBound maxBound
 
 propLexInverseUnlex :: BalancedTokens -> Bool
-propLexInverseUnlex btoks = lexer [] (concatMap unlex (unTokens btoks)) == (unTokens btoks)
+propLexInverseUnlex btoks =
+  lexer [] (concatMap unlex (unTokens btoks)) == (unTokens btoks)
 
 
 main = do
-    print "propFail..."
-    quickCheck propLexInverseUnlex
+    print "propLexInverseUnlex..."
+    verboseCheck propLexInverseUnlex
     print "sameEver..."
     quickCheck propSameEverIdentical
