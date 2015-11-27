@@ -24,6 +24,12 @@ sepBy p sep = some_p <|> return []
     many_p = (sep *> some_p) <|> return []
     some_p = (:) <$> p <*> many_p
 
+sepBy1 :: TokenParser o -> TokenParser x -> TokenParser [o]
+sepBy1 p sep = some_p
+  where
+    many_p = (sep *> some_p) <|> return []
+    some_p = (:) <$> p <*> many_p
+
 wrapSequence :: TokenParser Expr -> TokenParser x -> TokenParser Expr
 wrapSequence p sep = do
   exprs <- sepBy p sep

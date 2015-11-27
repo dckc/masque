@@ -15,7 +15,7 @@ import Masque.ParseUtil (seq1)
 import Masque.SyntaxDiagrams (expr, blockExpr, pattern)
 
 expression :: (Parser Token) [Expr]
-expression = seq1 blockExpr
+expression = seq1 (blockExpr <|> expr)
 
 parseSource :: String -> [Expr]
 parseSource s = runParser expression tokens
