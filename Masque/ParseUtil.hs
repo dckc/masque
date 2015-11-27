@@ -19,10 +19,7 @@ seq1 p = some_p <* (optionMaybe semi)
     semi = symbol ";"
 
 sepBy :: TokenParser o -> TokenParser x -> TokenParser [o]
-sepBy p sep = some_p <|> return []
-  where
-    many_p = (sep *> some_p) <|> return []
-    some_p = (:) <$> p <*> many_p
+sepBy p sep = sepBy1 p sep <|> return []
 
 sepBy1 :: TokenParser o -> TokenParser x -> TokenParser [o]
 sepBy1 p sep = some_p
