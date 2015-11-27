@@ -20,7 +20,7 @@ data Expr = CharExpr Char
           | GetExpr Expr [Expr]
           | CurryExpr Expr Bool String
           | ListExpr [Expr]
-          | MapExpr [(Expr, Expr)]
+          | MapExpr [Either Expr (Expr, Expr)]
           | RangeExpr Expr String Expr  -- Stringly typed?
           | PrefixExpr String Expr  -- String?
           | SlotExpr String
