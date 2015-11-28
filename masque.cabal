@@ -21,9 +21,13 @@ executable masque
   main-is:             Main.hs
   other-modules:       Masque.AST
                      , Masque.BAST
-                     , Masque.Objects
+--                     , Masque.BAST
                      , Masque.Lexer
+                     , Masque.Objects
+                     , Masque.ParseUtil
                      , Masque.Parser
+                     , Masque.Parsing
+                     , Masque.SyntaxDiagrams
   other-extensions:    DeriveDataTypeable,
                        DeriveGeneric,
                        RecursiveDo,
@@ -39,9 +43,12 @@ executable masque
                      , data-binary-ieee754 == 0.4.*
                      , either == 4.3.*
                      , free == 4.10.*
+                     , indentparser == 0.1.*
                      , lens == 4.7.*
                      , mtl == 2.2.*
                      , network == 2.6.*
+                     , parsec == 3.1.*
+                     , parsers == 0.12.*
                      , semigroups == 0.15.*
                      , transformers == 0.4.*
   -- hs-source-dirs:      
