@@ -1,13 +1,12 @@
 module TestData where
 
 import Text.JSON
+import qualified Text.Parsec as P
 
 import qualified Masque.Lex2 as ML2
 
-type TagTok = (String, JSValue)
-
 data LexerTestCase =
-  LexerTestCase { input :: String, expected :: [TagTok]}
+  LexerTestCase { input :: String, expected :: [ML2.TagTok]}
   deriving (Eq, Show)
 
 data LexerTestFunc =
@@ -37,15 +36,13 @@ instance JSON LexerTestFunc where
     return LexerTestFunc { func = f, cases = cs }
   readJSON _ = Error "?"
 
-lexerTestData :: IO (Result [LexerTestFunc])
-lexerTestData = do
-  text <- readFile "testsuite/lexer.json"
-  return $ lexerTestCases text
 
-lexerTestCases :: String -> Result [LexerTestFunc]
-lexerTestCases text = decode text
+type Failure = (String, -- test function
+                LexerTestCase, -- input, expected
+                Either P.ParseError [ML2.TagTok]) -- actual
 
-lexerTestResults fs = concatMap testFunc fs
+lexerTestResults :: [LexerTestFunc] -> [Failure]
+lexerTestResults testData = concatMap testFunc testData
   where
     testFunc fcs = concatMap (testCase $ func fcs) (cases fcs)
     testCase f c = let
@@ -54,3 +51,27 @@ lexerTestResults fs = concatMap testFunc fs
         if actual == Right (expected c)
         then []
         else [(f, c, actual)]
+
+
+-- | Usage: readFile "testsuite/lexer.json" >>= runLexerTests
+runLexerTests :: String -> IO ()
+runLexerTests jsonTestData = case decode jsonTestData of
+  (Ok testData) -> runTests testData
+  (Error msg) -> putStrLn msg
+  where
+    runTests testData = do
+      _ <- mapM printFailure (lexerTestResults testData)
+      return ()
+
+    printFailure (f, c, actual) = do
+      putStrLn ""
+      putStrLn $ "FAILURE in: " ++ f
+      putStrLn $ "     input:" ++ (input c)
+      putStrLn $ "  expected: " ++ (showJSValue (showJSON $ expected c) "")
+      printResult actual
+
+    printResult (Right toks) = do
+      putStrLn $ "    actual: " ++ (showJSValue (showJSON $ toks) "")
+    printResult (Left err) = do
+      putStrLn $ "  ERROR: " ++ (show err)
+
