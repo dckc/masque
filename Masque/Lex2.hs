@@ -7,6 +7,8 @@ import Text.Parsec.IndentParsec(runGIPT)
 
 import Control.Monad.Identity
 import Control.Applicative ((<$>), (<*>), (<*), (*>))
+import qualified Data.Map as M
+import Numeric (readHex)
 import qualified Text.Parsec.Token as T
 import qualified Text.Parsec.IndentParsec.Token as IT
 import qualified Text.Parsec.IndentParsec.Prim as IP
@@ -166,10 +168,40 @@ monteToken = op <|> literal <|> punct <|> augAssign <|> kw <|> ident
       return (t, J.JSNull)
     ident = tagged "IDENTIFIER" <$> IT.identifier tokP
     tagged t s = (t, J.showJSON s)
-    literal = (P.try integer) <|> (P.try str)
+    literal = (P.try double) <|> (P.try integer)
+              <|> (P.try char) <|> (P.try str)
     str = tagged ".String." <$> IT.stringLiteral tokP
     integer = shown ".int." <$> IT.integer tokP
+    double = shown ".float64." <$> IT.float tokP
+    char = shown ".char." <$> IT.lexeme tokP charLiteral
     shown t x = (t, J.showJSON x)
     kwds = [kw' | (kw', _) <- ML.keywords]
 -- semiSep = IT.semiSepOrFoldedLines tokP
 
+charLiteral :: MonteLex Char
+charLiteral = (P.char '\'') *> (P.noneOf "'\\\t" <|> escape) <* (P.char '\'')
+  where
+    escape = (P.char '\\') *> (P.many $ P.string '\\\n') *> (hex <|> special)
+
+    hex = numChar <$> (numeral 'U' 8 hexDigit)
+          <|> numChar <$> (numeral 'u' 4 hexDigit)
+          <|> numChar <$> (numeral 'x' 2 hexDigit)
+    numChar :: String -> Char
+    numChar ds = let [(i, _)] = readHex ds in toEnum i
+    numeral pfx len digits = (P.char pfx) *> (P.count len (P.oneOf digits))
+    hexDigit = "0123456789abcdefABCDEF"
+
+    special = do
+      code <- P.anyToken
+      case M.lookup code codes of
+        Just ch -> return ch
+        Nothing -> P.unexpected ("character escape: \\" ++ [code])
+    codes = M.fromList [
+      ('b', '\b'),
+      ('t', '\t'),
+      ('n', '\n'),
+      ('f', '\f'),
+      ('r', '\r'),
+      ('"', '"'),
+      ('\'', '\''),
+      ('\\', '\\')]
