@@ -1,0 +1,1161 @@
+[
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "IDENTIFIER", 
+            "foo_bar9"
+          ]
+        ], 
+        "input": "foo_bar9"
+      }, 
+      {
+        "expected": [
+          [
+            "IDENTIFIER", 
+            "foo"
+          ]
+        ], 
+        "input": "foo"
+      }
+    ], 
+    "func": "test_ident"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            ".char.", 
+            "z"
+          ]
+        ], 
+        "input": "'z'"
+      }, 
+      {
+        "expected": [
+          [
+            ".char.", 
+            "\n"
+          ]
+        ], 
+        "input": "'\\n'"
+      }, 
+      {
+        "expected": [
+          [
+            ".char.", 
+            "a"
+          ]
+        ], 
+        "input": "'\\u0061'"
+      }, 
+      {
+        "expected": [
+          [
+            ".char.", 
+            "a"
+          ]
+        ], 
+        "input": "'\\x61'"
+      }
+    ], 
+    "func": "test_char"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            ".String.", 
+            "foobar"
+          ]
+        ], 
+        "input": "\"foo\\$\nbar\""
+      }, 
+      {
+        "expected": [
+          [
+            ".String.", 
+            "foo"
+          ]
+        ], 
+        "input": "\"foo\""
+      }, 
+      {
+        "expected": [
+          [
+            ".String.", 
+            "foo bar 9"
+          ]
+        ], 
+        "input": "\"foo bar 9\""
+      }, 
+      {
+        "expected": [
+          [
+            ".String.", 
+            "foo\nbar"
+          ]
+        ], 
+        "input": "\"foo\nbar\""
+      }
+    ], 
+    "func": "test_string"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            ".int.", 
+            0
+          ]
+        ], 
+        "input": "0"
+      }, 
+      {
+        "expected": [
+          [
+            ".int.", 
+            7
+          ]
+        ], 
+        "input": "7"
+      }, 
+      {
+        "expected": [
+          [
+            ".int.", 
+            3000
+          ]
+        ], 
+        "input": "3_000"
+      }, 
+      {
+        "expected": [
+          [
+            ".int.", 
+            2880249322
+          ]
+        ], 
+        "input": "0xABad1dea"
+      }
+    ], 
+    "func": "test_integer"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            ".float64.", 
+            1000000000.0
+          ]
+        ], 
+        "input": "1e9"
+      }, 
+      {
+        "expected": [
+          [
+            ".float64.", 
+            3.1415e+17
+          ]
+        ], 
+        "input": "3.1415E17"
+      }, 
+      {
+        "expected": [
+          [
+            ".float64.", 
+            0.91
+          ]
+        ], 
+        "input": "0.91"
+      }, 
+      {
+        "expected": [
+          [
+            ".float64.", 
+            0.03
+          ]
+        ], 
+        "input": "3e-2"
+      }
+    ], 
+    "func": "test_float"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "${", 
+            null
+          ]
+        ], 
+        "input": "${"
+      }, 
+      {
+        "expected": [
+          [
+            "DOLLAR_IDENT", 
+            "blee"
+          ]
+        ], 
+        "input": "$blee"
+      }, 
+      {
+        "expected": [
+          [
+            "@{", 
+            null
+          ]
+        ], 
+        "input": "@{"
+      }, 
+      {
+        "expected": [
+          [
+            "AT_IDENT", 
+            "blee"
+          ]
+        ], 
+        "input": "@blee"
+      }, 
+      {
+        "expected": [
+          [
+            "AT_IDENT", 
+            "_fred"
+          ]
+        ], 
+        "input": "@_fred"
+      }, 
+      {
+        "expected": [
+          [
+            "AT_IDENT", 
+            "_"
+          ]
+        ], 
+        "input": "@_"
+      }
+    ], 
+    "func": "test_holes"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "[", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "a"
+          ], 
+          [
+            ",", 
+            null
+          ], 
+          [
+            ".int.", 
+            1
+          ], 
+          [
+            "]", 
+            null
+          ]
+        ], 
+        "input": "[a, 1]"
+      }, 
+      {
+        "expected": [
+          [
+            "{", 
+            null
+          ], 
+          [
+            ".int.", 
+            1
+          ], 
+          [
+            "}", 
+            null
+          ]
+        ], 
+        "input": "{1}"
+      }, 
+      {
+        "expected": [
+          [
+            "(", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "a"
+          ], 
+          [
+            ")", 
+            null
+          ]
+        ], 
+        "input": "(a)"
+      }
+    ], 
+    "func": "test_braces"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            ".", 
+            null
+          ]
+        ], 
+        "input": "."
+      }, 
+      {
+        "expected": [
+          [
+            "..", 
+            null
+          ]
+        ], 
+        "input": ".."
+      }, 
+      {
+        "expected": [
+          [
+            "..!", 
+            null
+          ]
+        ], 
+        "input": "..!"
+      }
+    ], 
+    "func": "test_dot"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "^", 
+            null
+          ]
+        ], 
+        "input": "^"
+      }, 
+      {
+        "expected": [
+          [
+            "^=", 
+            null
+          ]
+        ], 
+        "input": "^="
+      }
+    ], 
+    "func": "test_caret"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "+", 
+            null
+          ]
+        ], 
+        "input": "+"
+      }, 
+      {
+        "expected": [
+          [
+            "+=", 
+            null
+          ]
+        ], 
+        "input": "+="
+      }
+    ], 
+    "func": "test_plus"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "-", 
+            null
+          ]
+        ], 
+        "input": "-"
+      }, 
+      {
+        "expected": [
+          [
+            "-=", 
+            null
+          ]
+        ], 
+        "input": "-="
+      }, 
+      {
+        "expected": [
+          [
+            "->", 
+            null
+          ], 
+          [
+            "{", 
+            null
+          ]
+        ], 
+        "input": "-> {"
+      }
+    ], 
+    "func": "test_minus"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            ":", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "x"
+          ]
+        ], 
+        "input": ":x"
+      }, 
+      {
+        "expected": [
+          [
+            ":=", 
+            null
+          ]
+        ], 
+        "input": ":="
+      }, 
+      {
+        "expected": [
+          [
+            "::", 
+            null
+          ]
+        ], 
+        "input": "::"
+      }
+    ], 
+    "func": "test_colon"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "<", 
+            null
+          ]
+        ], 
+        "input": "<"
+      }, 
+      {
+        "expected": [
+          [
+            "<-", 
+            null
+          ]
+        ], 
+        "input": "<-"
+      }, 
+      {
+        "expected": [
+          [
+            "<=", 
+            null
+          ]
+        ], 
+        "input": "<="
+      }, 
+      {
+        "expected": [
+          [
+            "<<=", 
+            null
+          ]
+        ], 
+        "input": "<<="
+      }, 
+      {
+        "expected": [
+          [
+            "<=>", 
+            null
+          ]
+        ], 
+        "input": "<=>"
+      }
+    ], 
+    "func": "test_crunch"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            ">", 
+            null
+          ]
+        ], 
+        "input": ">"
+      }, 
+      {
+        "expected": [
+          [
+            ">=", 
+            null
+          ]
+        ], 
+        "input": ">="
+      }, 
+      {
+        "expected": [
+          [
+            ">>=", 
+            null
+          ]
+        ], 
+        "input": ">>="
+      }
+    ], 
+    "func": "test_zap"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "*", 
+            null
+          ]
+        ], 
+        "input": "*"
+      }, 
+      {
+        "expected": [
+          [
+            "*=", 
+            null
+          ]
+        ], 
+        "input": "*="
+      }, 
+      {
+        "expected": [
+          [
+            "**", 
+            null
+          ]
+        ], 
+        "input": "**"
+      }, 
+      {
+        "expected": [
+          [
+            "**=", 
+            null
+          ]
+        ], 
+        "input": "**="
+      }
+    ], 
+    "func": "test_star"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "/", 
+            null
+          ]
+        ], 
+        "input": "/"
+      }, 
+      {
+        "expected": [
+          [
+            "/=", 
+            null
+          ]
+        ], 
+        "input": "/="
+      }, 
+      {
+        "expected": [
+          [
+            "//", 
+            null
+          ]
+        ], 
+        "input": "//"
+      }, 
+      {
+        "expected": [
+          [
+            "//=", 
+            null
+          ]
+        ], 
+        "input": "//="
+      }
+    ], 
+    "func": "test_slash"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "%", 
+            null
+          ]
+        ], 
+        "input": "%"
+      }, 
+      {
+        "expected": [
+          [
+            "%=", 
+            null
+          ]
+        ], 
+        "input": "%="
+      }
+    ], 
+    "func": "test_mod"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "#", 
+            " yes"
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            ".int.", 
+            1
+          ]
+        ], 
+        "input": "# yes\n1"
+      }
+    ], 
+    "func": "test_comment"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "!", 
+            null
+          ]
+        ], 
+        "input": "!"
+      }, 
+      {
+        "expected": [
+          [
+            "!=", 
+            null
+          ]
+        ], 
+        "input": "!="
+      }, 
+      {
+        "expected": [
+          [
+            "!~", 
+            null
+          ]
+        ], 
+        "input": "!~"
+      }
+    ], 
+    "func": "test_bang"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "==", 
+            null
+          ]
+        ], 
+        "input": "=="
+      }, 
+      {
+        "expected": [
+          [
+            "=~", 
+            null
+          ]
+        ], 
+        "input": "=~"
+      }, 
+      {
+        "expected": [
+          [
+            "=>", 
+            null
+          ]
+        ], 
+        "input": "=>"
+      }
+    ], 
+    "func": "test_eq"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "&", 
+            null
+          ]
+        ], 
+        "input": "&"
+      }, 
+      {
+        "expected": [
+          [
+            "&=", 
+            null
+          ]
+        ], 
+        "input": "&="
+      }, 
+      {
+        "expected": [
+          [
+            "&!", 
+            null
+          ]
+        ], 
+        "input": "&!"
+      }, 
+      {
+        "expected": [
+          [
+            "&&", 
+            null
+          ]
+        ], 
+        "input": "&&"
+      }
+    ], 
+    "func": "test_and"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "|", 
+            null
+          ]
+        ], 
+        "input": "|"
+      }, 
+      {
+        "expected": [
+          [
+            "|=", 
+            null
+          ]
+        ], 
+        "input": "|="
+      }
+    ], 
+    "func": "test_or"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "foo"
+          ], 
+          [
+            ":", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "INDENT", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "baz"
+          ], 
+          [
+            "DEDENT", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ]
+        ], 
+        "input": "\nfoo:\n  baz\n\n\n"
+      }
+    ], 
+    "func": "test_indent_simple"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "foo"
+          ], 
+          [
+            "->", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "INDENT", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "baz"
+          ], 
+          [
+            "DEDENT", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ]
+        ], 
+        "input": "\nfoo ->\n  baz\n\n\n"
+      }
+    ], 
+    "func": "test_indent_arrow"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "foo"
+          ], 
+          [
+            ":", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "INDENT", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "baz"
+          ], 
+          [
+            "DEDENT", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "blee"
+          ]
+        ], 
+        "input": "\nfoo:\n  baz\nblee\n"
+      }
+    ], 
+    "func": "test_indent_dedent"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "foo"
+          ], 
+          [
+            ":", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "INDENT", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "baz"
+          ], 
+          [
+            "DEDENT", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "blee"
+          ]
+        ], 
+        "input": "\nfoo:\n\n  baz\n\n\nblee\n"
+      }
+    ], 
+    "func": "test_indent_vertical"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "foo"
+          ], 
+          [
+            ":", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "INDENT", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "baz"
+          ], 
+          [
+            "DEDENT", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "blee"
+          ]
+        ], 
+        "input": "\nfoo:    \n  baz\nblee\n"
+      }
+    ], 
+    "func": "test_indent_horiz"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "foo"
+          ], 
+          [
+            ":", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "INDENT", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "baz"
+          ], 
+          [
+            ":", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "INDENT", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "biz"
+          ], 
+          [
+            "DEDENT", 
+            null
+          ], 
+          [
+            "DEDENT", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "blee"
+          ]
+        ], 
+        "input": "\nfoo:\n  baz:\n     biz\nblee\n"
+      }
+    ], 
+    "func": "test_indent_multi"
+  }, 
+  {
+    "cases": [
+      {
+        "expected": [
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "foo"
+          ], 
+          [
+            "(", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "baz"
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "biz"
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            ")", 
+            null
+          ], 
+          [
+            "EOL", 
+            null
+          ], 
+          [
+            "IDENTIFIER", 
+            "blee"
+          ]
+        ], 
+        "input": "\nfoo (\n  baz\n    biz\n )\nblee\n"
+      }
+    ], 
+    "func": "test_indent_continuation"
+  }
+]
