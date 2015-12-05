@@ -72,7 +72,7 @@
             "foobar"
           ]
         ], 
-        "input": "\"foo\\$\nbar\""
+        "input": "\"foo\\\nbar\""
       }, 
       {
         "expected": [
