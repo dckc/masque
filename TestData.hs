@@ -46,7 +46,9 @@ lexerTestResults testData = concatMap testFunc testData
   where
     testFunc fcs = concatMap (testCase $ func fcs) (cases fcs)
     testCase f c = let
-      actual = ML2.lexString (input c)
+      actual = if f == "test_holes"
+               then ML2.lexStringIn ['`'] (input c)
+               else ML2.lexString (input c)
       in
         if actual == Right (expected c)
         then []

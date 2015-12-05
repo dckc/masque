@@ -7,6 +7,7 @@ import Text.Parsec.IndentParsec(runGIPT)
 
 import Control.Monad.Identity
 import Control.Applicative ((<$>), (<*>), (<*), (*>))
+import qualified Data.List as L
 import qualified Data.Map as M
 import Numeric (readHex)
 import qualified Text.Parsec.Token as T
@@ -46,8 +47,11 @@ lexSource inp = case lexString inp of
     print e
 
 lexString :: String -> Either P.ParseError [TagTok]
-lexString inp =
-          let x = runGIPT monteTokens [] "<inp>" inp
+lexString inp = lexStringIn [] inp
+
+lexStringIn :: [Char] -> String -> Either P.ParseError [TagTok]
+lexStringIn stack inp =
+          let x = runGIPT monteTokens stack "<inp>" inp
               in runIdentity x
 
 type MonteLex a = IP.IndentParsecT String [Char] Identity a
@@ -62,9 +66,11 @@ monteTokens = do
     rest = do
       stack <- P.getState
       case stack of
-        ('`':_) -> (++) <$> quasiParts <*> rest
-        (_:_) -> (++) <$> scan <*> rest
-        [] -> (const [] <$> P.eof) <|> scan
+        ('`':_) -> (const [] <$> P.eof) -- EOF kludge only for testing?
+                   <|> (++) <$> quasiParts <*> rest
+        _ -> (const [] <$> P.eof)
+             <|> (++) <$> scan <*> rest
+        -- [] -> (const [] <$> P.eof) <|> scan
 
     scan :: MonteLex [TagTok]
     scan =
@@ -112,6 +118,7 @@ monteTokens = do
       <|> (:) <$> (P.try (hole '$' "DOLLAR_IDENT")
                    <|> P.try (hole '@' "AT_IDENT")) <*> quasiParts
       <|> (\t ts -> collapse (t:ts)) <$> ((\txt -> ("QUASI_TEXT", J.showJSON $ txt)) <$> quasiText) <*> quasiParts
+      <|> const [] <$> P.eof  -- testing KLUDGE?
       <|> P.unexpected "quasiText construct"
     collapse :: [TagTok] -> [TagTok]
     collapse (("QUASI_TEXT", J.JSString s1):("QUASI_TEXT", J.JSString s2):toks)
@@ -158,8 +165,12 @@ monteToken = op <|> literal <|> punct <|> augAssign <|> kw <|> ident
         P.unexpected $ "keyword in augmented assignment: " ++ s
         else return ("VERB_ASSIGN", J.showJSON s)
     kw = go IT.reserved kwds P.<?> "keyword"
-    op = go IT.reservedOp [op' | (op', _) <- ML.operators] P.<?> "operator"
-    punct = go IT.reservedOp [p' | (p', _) <- ML.punctuation]
+    op = go IT.reservedOp (sorted ML.operators) P.<?> "operator"
+    punct = go IT.reservedOp (sorted ML.punctuation)
+    sorted vocab = let
+      vs = [spelling | (spelling, _) <- vocab]
+      in L.sortBy longestFirst vs
+    longestFirst s1 s2 = length s2 `compare` length s1
     go _ [] = error "at least 1"
     go f [t1] = go' f t1
     go f (t1:t2:ts) = (go' f t1) <|> (go f (t2:ts))
@@ -170,38 +181,66 @@ monteToken = op <|> literal <|> punct <|> augAssign <|> kw <|> ident
     tagged t s = (t, J.showJSON s)
     literal = (P.try double) <|> (P.try integer)
               <|> (P.try char) <|> (P.try str)
-    str = tagged ".String." <$> IT.stringLiteral tokP
+    str :: MonteLex TagTok
+    str = shown ".String." <$> IT.lexeme tokP stringLiteral
     integer = shown ".int." <$> IT.integer tokP
     double = shown ".float64." <$> IT.float tokP
-    char = shown ".char." <$> IT.lexeme tokP charLiteral
+    char :: MonteLex TagTok
+    char = shown ".char." <$> IT.lexeme tokP ((P.char '\'') *> charConstant <* (P.char '\''))
     shown t x = (t, J.showJSON x)
     kwds = [kw' | (kw', _) <- ML.keywords]
 -- semiSep = IT.semiSepOrFoldedLines tokP
 
-charLiteral :: MonteLex Char
-charLiteral = (P.char '\'') *> (P.noneOf "'\\\t" <|> escape) <* (P.char '\'')
+
+charConstant :: MonteLex Char
+charConstant = (charConstant_1 *> charConstant_2 )
   where
-    escape = (P.char '\\') *> (P.many $ P.string '\\\n') *> (hex <|> special)
+    charConstant_1 = P.skipMany charConstant_1_1_1
+    charConstant_1_1_1 = P.try $ P.string "\\\n"  -- TODO: add try to syntaxDef.
+    charConstant_2 = (P.noneOf "'\\\t")
+      <|> charConstant_2_2
+    charConstant_2_2 = ((P.char '\\') *> charConstant_2_2_2 )
+    charConstant_2_2_2 = charConstant_2_2_2_1
+      <|> charConstant_2_2_2_2
+    charConstant_2_2_2_1 = hexChar <$> charConstant_2_2_2_1_1
+    charConstant_2_2_2_1_1 = charConstant_2_2_2_1_1_1
+      <|> charConstant_2_2_2_1_1_2
+      <|> charConstant_2_2_2_1_1_3
+    charConstant_2_2_2_1_1_1 = ((P.char 'U') *> charConstant_2_2_2_1_1_1_2 )
+    charConstant_2_2_2_1_1_1_2 = P.count 8 hexDigit
+    charConstant_2_2_2_1_1_2 = ((P.char 'u') *> charConstant_2_2_2_1_1_2_2 )
+    charConstant_2_2_2_1_1_2_2 = P.count 4 hexDigit
+    charConstant_2_2_2_1_1_3 = ((P.char 'x') *> charConstant_2_2_2_1_1_3_2 )
+    charConstant_2_2_2_1_1_3_2 = P.count 2 hexDigit
+    charConstant_2_2_2_2 = decodeSpecial (P.oneOf "btnfr\\\'\"")
 
-    hex = numChar <$> (numeral 'U' 8 hexDigit)
-          <|> numChar <$> (numeral 'u' 4 hexDigit)
-          <|> numChar <$> (numeral 'x' 2 hexDigit)
-    numChar :: String -> Char
-    numChar ds = let [(i, _)] = readHex ds in toEnum i
-    numeral pfx len digits = (P.char pfx) *> (P.count len (P.oneOf digits))
-    hexDigit = "0123456789abcdefABCDEF"
+hexDigit :: MonteLex Char
+hexDigit = (P.oneOf "0123456789abcdefABCDEF")
 
-    special = do
-      code <- P.anyToken
-      case M.lookup code codes of
-        Just ch -> return ch
-        Nothing -> P.unexpected ("character escape: \\" ++ [code])
-    codes = M.fromList [
-      ('b', '\b'),
-      ('t', '\t'),
-      ('n', '\n'),
-      ('f', '\f'),
-      ('r', '\r'),
-      ('"', '"'),
-      ('\'', '\''),
-      ('\\', '\\')]
+-- strExpr = StrExpr <$> strExpr_1
+stringLiteral :: MonteLex String
+stringLiteral = {- StrExpr <$> -} strExpr_1
+  where
+    strExpr_1 = ((P.char '"') *> strExpr_1_2 )
+    strExpr_1_2 = P.manyTill charConstant (P.char '"')
+
+
+hexChar :: String -> Char
+hexChar ds = let [(i, _)] = readHex ds in toEnum i
+
+decodeSpecial :: (MonteLex Char) -> (MonteLex Char)
+decodeSpecial pch = let
+  codes = M.fromList [
+    ('b', '\b'),
+    ('t', '\t'),
+    ('n', '\n'),
+    ('f', '\f'),
+    ('r', '\r'),
+    ('"', '"'),
+    ('\'', '\''),
+    ('\\', '\\')]
+  in do
+    code <- pch
+    case M.lookup code codes of
+      Just ch -> return ch
+      Nothing -> P.unexpected ("character escape: \\" ++ [code])
