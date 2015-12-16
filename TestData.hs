@@ -23,7 +23,14 @@ instance JSON LexerTestCase where
   readJSON (JSObject o) = do
     i <- valFromObj "input" o
     ex <- valFromObj "expected" o
-    return LexerTestCase { input = i, expected = ex }
+    return LexerTestCase { input = i, expected = fixFloat ex }
+      where
+        fixFloat :: [ML2.TagTok] -> [ML2.TagTok]
+        fixFloat [(tag, JSRational False rat)] =
+          [(tag, JSRational False (toRational $ asDouble rat))]
+        fixFloat other = other
+        asDouble :: Rational -> Double
+        asDouble r = fromRational r
   readJSON _ = Error "?"
 
 instance JSON LexerTestFunc where
