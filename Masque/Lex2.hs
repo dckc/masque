@@ -3,19 +3,18 @@ module Masque.Lex2 where
 import qualified Text.JSON as J
 import Text.Parsec ((<|>))
 import qualified Text.Parsec as P
-import qualified Text.Parsec.Char as PC
 import Text.Parsec.IndentParsec(runGIPT)
 
 import Control.Monad.Identity
 import Control.Applicative ((<$>), (<*>), (<*), (*>), pure)
 import qualified Data.List as L
-import qualified Data.Map as M
-import Numeric (readHex)
 import qualified Text.Parsec.Token as T
 import qualified Text.Parsec.IndentParsec.Token as IT
 import qualified Text.Parsec.IndentParsec.Prim as IP
 
 import qualified Masque.Lexer as ML
+import Masque.ParseUtil (MonteLex, decodeSpecial, hexChar)
+import Masque.SyntaxDiagrams
 
 type TagTok = (String, J.JSValue)
 
@@ -54,8 +53,6 @@ lexStringIn :: [Char] -> String -> Either P.ParseError [TagTok]
 lexStringIn stack inp =
           let x = runGIPT monteTokens stack "<inp>" inp
               in runIdentity x
-
-type MonteLex a = IP.IndentParsecT String [Char] Identity a
 
 monteTokens :: MonteLex [TagTok]
 monteTokens = do
@@ -192,139 +189,3 @@ monteToken = op <|> literal <|> punct <|> augAssign <|> kw <|> ident
     shown t x = (t, J.showJSON x)
     kwds = [kw' | (kw', _) <- ML.keywords]
 -- semiSep = IT.semiSepOrFoldedLines tokP
-
-
-{-
-decLiteral ::= Ap('(read :: String -> Integer)', P('digits'))
--}
-decLiteral = (read :: String -> Integer) <$> digits
-
-{-
-digits ::= Ap("filter ((/=) '_')",
-  Ap('(:)', P('digit'), Many(Choice(0, P('digit'), Char('_')))))
--}
-digits = filter ((/=) '_') <$> digits_1
-  where
-    digits_1 = (:) <$> digit <*> digits_1_2
-    digits_1_2 = P.many digits_1_2_1_1
-    digits_1_2_1_1 = digit
-      <|> (P.char '_')
-
-{-
-digit ::= OneOf('0123456789')
--}
-digit = (P.oneOf "0123456789")
-
-{-
-hexLiteral ::= Ap('(read :: String -> Integer)',
-  Ap('(:)', Char('0'),
-    Ap('(:)', Choice(0, Char('x'), Char('X')), P('hexDigits'))))
--}
-hexLiteral = (read :: String -> Integer) <$> hexLiteral_1
-  where
-    hexLiteral_1 = (:) <$> (P.char '0') <*> hexLiteral_1_2
-    hexLiteral_1_2 = (:) <$> hexLiteral_1_2_1 <*> hexDigits
-    hexLiteral_1_2_1 = (P.char 'x')
-      <|> (P.char 'X')
-
-{-
-hexDigits ::= Ap("filter ((/=) '_')",
-  Ap('(:)', P('hexDigit'), Many(Choice(0, P('hexDigit'), Char('_')))))
--}
-hexDigits = filter ((/=) '_') <$> hexDigits_1
-  where
-    hexDigits_1 = (:) <$> hexDigit <*> hexDigits_1_2
-    hexDigits_1_2 = P.many hexDigits_1_2_1_1
-    hexDigits_1_2_1_1 = hexDigit
-      <|> (P.char '_')
-
-{-
-hexDigit ::= OneOf('0123456789abcdefABCDEF')
--}
-hexDigit = (P.oneOf "0123456789abcdefABCDEF")
-
-
-{-
-floatLiteral ::= Ap('(read :: String -> Double)',
-  Ap('(++)',
-    P('digits'),
-    Choice(0,
-      Ap('(++)',
-        Ap('(:)', Char('.'), P('digits')),
-        Optional(P('floatExpn'), x='""')),
-      P('floatExpn'))))
--}
-floatLiteral = (read :: String -> Double) <$> floatLiteral_1
-  where
-    floatLiteral_1 = (++) <$> digits <*> floatLiteral_1_2
-    floatLiteral_1_2 = floatLiteral_1_2_1
-      <|> floatExpn
-    floatLiteral_1_2_1 = (++) <$> floatLiteral_1_2_1_1 <*> floatLiteral_1_2_1_2
-    floatLiteral_1_2_1_1 = (:) <$> (P.char '.') <*> digits
-    floatLiteral_1_2_1_2 = P.option "" floatExpn
-
-{-
-floatExpn ::= Ap('(:)',
-  OneOf("eE"),
-  Ap('(++)',
-    Optional(Ap('pure', OneOf('-+')), x='""'),
-    P('digits')))
--}
-floatExpn = (:) <$> floatExpn_1 <*> floatExpn_2
-  where
-    floatExpn_1 = (P.oneOf "eE")
-    floatExpn_2 = (++) <$> floatExpn_2_1 <*> digits
-    floatExpn_2_1 = P.option "" floatExpn_2_1_1
-    floatExpn_2_1_1 = pure <$> floatExpn_2_1_1_1
-    floatExpn_2_1_1_1 = (P.oneOf "-+")
-
-
-charConstant :: MonteLex Char
-charConstant = (charConstant_1 *> charConstant_2 )
-  where
-    charConstant_1 = P.skipMany charConstant_1_1_1
-    charConstant_1_1_1 = P.try $ P.string "\\\n"  -- TODO: add try to syntaxDef.
-    charConstant_2 = (P.noneOf "'\\\t")
-      <|> charConstant_2_2
-    charConstant_2_2 = ((P.char '\\') *> charConstant_2_2_2 )
-    charConstant_2_2_2 = charConstant_2_2_2_1
-      <|> charConstant_2_2_2_2
-    charConstant_2_2_2_1 = hexChar <$> charConstant_2_2_2_1_1
-    charConstant_2_2_2_1_1 = charConstant_2_2_2_1_1_1
-      <|> charConstant_2_2_2_1_1_2
-      <|> charConstant_2_2_2_1_1_3
-    charConstant_2_2_2_1_1_1 = ((P.char 'U') *> charConstant_2_2_2_1_1_1_2 )
-    charConstant_2_2_2_1_1_1_2 = P.count 8 hexDigit
-    charConstant_2_2_2_1_1_2 = ((P.char 'u') *> charConstant_2_2_2_1_1_2_2 )
-    charConstant_2_2_2_1_1_2_2 = P.count 4 hexDigit
-    charConstant_2_2_2_1_1_3 = ((P.char 'x') *> charConstant_2_2_2_1_1_3_2 )
-    charConstant_2_2_2_1_1_3_2 = P.count 2 hexDigit
-    charConstant_2_2_2_2 = decodeSpecial (P.oneOf "btnfr\\\'\"")
-
--- strExpr = StrExpr <$> strExpr_1
-stringLiteral :: MonteLex String
-stringLiteral = {- StrExpr <$> -} strExpr_1
-  where
-    strExpr_1 = ((P.char '"') *> strExpr_1_2 )
-    strExpr_1_2 = P.manyTill charConstant (P.char '"')
-
-
-hexChar :: String -> Char
-hexChar ds = let [(i, _)] = readHex ds in toEnum i
-
-decodeSpecial :: (MonteLex Char) -> (MonteLex Char)
-decodeSpecial pch = let
-  codes = M.fromList [
-    ('b', '\b'),
-    ('t', '\t'),
-    ('n', '\n'),
-    ('f', '\f'),
-    ('r', '\r'),
-    ('"', '"'),
-    ('\'', '\''),
-    ('\\', '\\')]
-  in do
-    code <- pch
-    case M.lookup code codes of
-      Just ch -> return ch
-      Nothing -> P.unexpected ("character escape: \\" ++ [code])
